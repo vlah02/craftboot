@@ -94,11 +94,17 @@ Controls: **Up/Down** (or mouse) to move, **Enter/click** to select, **Esc** to 
 back / quit. Selecting Windows/Ubuntu plays the loading animation, prints the
 intended boot action to the terminal, and exits — it does not boot anything yet.
 
-The background is a **seamless rotating 360° panorama** built from the real
-Minecraft cubemap faces (`app/assets/panorama360.png`), scrolled with wraparound
-and a gentle vertical bob — tunables `VIEW_ZOOM` / `PANO_LOOP_SECONDS` in `main.py`.
-If that PNG is absent it falls back to a random drifting screenshot from
-`app/assets/backgrounds/`.
+**Background** has two modes (`--bg photos` default, `--bg pano`):
+- **photos** (default): a random, slightly blurred screenshot from
+  `app/assets/backgrounds/`, slowly panning horizontally (`PAN_SPEED_X`,
+  `PHOTO_BLUR`, `PHOTO_MARGIN`).
+- **pano**: the seamless rotating 360° panorama built from the real cubemap
+  (`panorama360.png`, tunables `VIEW_ZOOM` / `PANO_LOOP_SECONDS`).
+
+**Logo**: drop a pre-made 3D logo PNG at `app/assets/logo.png` (e.g. generated on
+textcraft.net) and it's used automatically; otherwise a procedural Minecrafter-font
+logo is drawn. A subtitle is shown under it — `app/assets/subtitle.png` if present,
+else the text in `SUBTITLE_TEXT` (default "BOOT EDITION").
 
 To regenerate the panorama from the 6 cube faces (e.g. to swap in a different
 world), edit/replace `app/assets/panorama_faces/panorama_0..5.png` and run:

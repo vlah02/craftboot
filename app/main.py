@@ -25,13 +25,30 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(HERE, "assets")
 FONT_PATH = os.path.join(ASSETS, "minecraft.otf")
 LOGO_FONT_PATH = os.path.join(ASSETS, "fonts", "Minecrafter.Reg.ttf")
+LOGO_IMG_PATH = os.path.join(ASSETS, "logo.png")          # optional pre-made 3D logo (textcraft.net)
+SUBTITLE_IMG_PATH = os.path.join(ASSETS, "subtitle.png")  # optional pre-made subtitle image
+SUBTITLE_TEXT = "BOOT EDITION"                            # rendered if no subtitle.png present
 
-# Fallback screenshot drift speeds (radians/sec) when no 360 panorama is present.
-PAN_SPEED_X = 0.30
-PAN_SPEED_Y = 0.18
-# 360 panorama: vertical zoom (higher = narrower vertical FOV) and full-loop time.
-VIEW_ZOOM = 2.4
-PANO_LOOP_SECONDS = 60.0
+# Background modes:
+#   "photos" (default) = random blurred screenshot, slow horizontal pan.
+#   "pano"             = seamless rotating 360 panorama (panorama360.png).
+PAN_SPEED_X = 0.28           # eased horizontal pan speed (photos mode)
+PHOTO_MARGIN = 1.5           # scale factor over screen size = how far it pans
+PHOTO_BLUR = 5               # background blur radius ("a little bit blurred")
+VIEW_ZOOM = 2.4              # pano mode vertical zoom
+PANO_LOOP_SECONDS = 60.0     # pano mode full-rotation time
+
+
+def blur_surface(surf, radius):
+    """Mild blur; uses pygame-ce's gaussian_blur, falls back to a scale trick."""
+    if radius <= 0:
+        return surf
+    try:
+        return pygame.transform.gaussian_blur(surf, radius)
+    except (AttributeError, pygame.error, TypeError):
+        w, h = surf.get_size()
+        small = pygame.transform.smoothscale(surf, (max(1, w // 4), max(1, h // 4)))
+        return pygame.transform.smoothscale(small, (w, h))
 
 # ---- Minecraft-ish palette -------------------------------------------------
 WHITE = (255, 255, 255)
@@ -137,12 +154,12 @@ class Panorama:
     equirectangular scroll). Falls back to a drifting screenshot if that PNG
     is missing."""
 
-    def __init__(self, screen_size):
+    def __init__(self, screen_size, mode="photos"):
         self.sw, self.sh = screen_size
         self.t = 0.0
         pano = os.path.join(ASSETS, "panorama360.png")
         strip = None
-        if os.path.exists(pano):
+        if mode == "pano" and os.path.exists(pano):
             try:
                 strip = pygame.image.load(pano).convert()
             except pygame.error:
@@ -176,10 +193,11 @@ class Panorama:
     def _init_drift(self):
         img = self._pick_image()
         cover = max(self.sw / img.get_width(), self.sh / img.get_height())
-        scale = cover * 1.35
-        self.img = pygame.transform.smoothscale(
+        scale = cover * PHOTO_MARGIN
+        img = pygame.transform.smoothscale(
             img, (int(img.get_width() * scale), int(img.get_height() * scale))
         )
+        self.img = blur_surface(img, PHOTO_BLUR)
         self.slack_x = max(1, self.img.get_width() - self.sw)
         self.slack_y = max(1, self.img.get_height() - self.sh)
 
@@ -205,9 +223,10 @@ class Panorama:
         return surf
 
     def _draw_drift(self, surface):
+        # slow horizontal pan (eased ping-pong), vertical held at centre
         fx = (1 - math.cos(self.t * PAN_SPEED_X)) / 2
-        fy = (1 - math.cos(self.t * PAN_SPEED_Y)) / 2
-        surface.blit(self.img, (-int(fx * self.slack_x), -int(fy * self.slack_y)))
+        y = -(self.slack_y // 2)
+        surface.blit(self.img, (-int(fx * self.slack_x), y))
 
     # -- shared --------------------------------------------------------------
     def update(self, dt):
@@ -222,20 +241,47 @@ class Panorama:
             self._draw_drift(surface)
 
 
+_BTN_TEX = {}
+
+
+def make_button_texture(w, h, selected):
+    """Minecraft-style button: vertical grey gradient + faint noise + bevel/border."""
+    top = (172, 172, 172) if selected else (152, 152, 152)
+    bot = (104, 104, 104) if selected else (92, 92, 92)
+    surf = pygame.Surface((w, h))
+    for yy in range(h):
+        f = yy / max(1, h - 1)
+        surf.fill(tuple(int(top[i] * (1 - f) + bot[i] * f) for i in range(3)), (0, yy, w, 1))
+    # faint speckle so it reads as a textured surface, not flat
+    for _ in range(max(30, w * h // 45)):
+        nx, ny = random.randint(0, w - 1), random.randint(0, h - 1)
+        c = 255 if random.random() < 0.5 else 0
+        surf.blit(_speckle(c), (nx, ny))
+    # bevel: light top/left, dark bottom/right, then black border
+    pygame.draw.line(surf, (205, 205, 205), (1, 1), (w - 2, 1))
+    pygame.draw.line(surf, (205, 205, 205), (1, 1), (1, h - 2))
+    pygame.draw.line(surf, (60, 60, 60), (1, h - 2), (w - 2, h - 2))
+    pygame.draw.line(surf, (60, 60, 60), (w - 2, 1), (w - 2, h - 2))
+    pygame.draw.rect(surf, (16, 16, 16), surf.get_rect(), width=2)
+    return surf
+
+
+def _speckle(c):
+    s = pygame.Surface((1, 1), pygame.SRCALPHA)
+    s.fill((c, c, c, 26))
+    return s
+
+
 def draw_button(surface, rect, surf_text, selected):
-    fill = BTN_FILL_HOVER if selected else BTN_FILL
-    pygame.draw.rect(surface, fill, rect)
-    # bevel
-    pygame.draw.line(surface, BTN_TOP, rect.topleft, rect.topright)
-    pygame.draw.line(surface, BTN_TOP, rect.topleft, rect.bottomleft)
-    pygame.draw.line(surface, BTN_BOTTOM, rect.bottomleft, rect.bottomright)
-    pygame.draw.line(surface, BTN_BOTTOM, rect.topright, rect.bottomright)
-    # outer border
-    pygame.draw.rect(surface, BTN_BORDER, rect, width=2)
+    key = (rect.width, rect.height, selected)
+    tex = _BTN_TEX.get(key)
+    if tex is None:
+        tex = make_button_texture(rect.width, rect.height, selected)
+        _BTN_TEX[key] = tex
+    surface.blit(tex, rect.topleft)
     if selected:
         pygame.draw.rect(surface, WHITE, rect.inflate(4, 4), width=2)
-    tr = surf_text.get_rect(center=rect.center)
-    surface.blit(surf_text, tr)
+    surface.blit(surf_text, surf_text.get_rect(center=rect.center))
 
 
 class Menu:
@@ -250,6 +296,7 @@ class Menu:
         self._btn_cache = {}
         self._rects = []
         self._logo = None
+        self._subtitle = False  # False = not built yet; may resolve to a surface or None
         self._layout()
 
     # ---- layout -----------------------------------------------------------
@@ -313,19 +360,50 @@ class Menu:
         return False
 
     # ---- draw -------------------------------------------------------------
+    def _make_logo_surf(self):
+        if os.path.exists(LOGO_IMG_PATH):
+            try:
+                img = pygame.image.load(LOGO_IMG_PATH).convert_alpha()
+                tw = int(self.sw * 0.55)
+                s = tw / img.get_width()
+                return pygame.transform.smoothscale(img, (tw, int(img.get_height() * s)))
+            except pygame.error:
+                pass
+        return make_logo("CRAFTBOOT", int(self.sh * 0.13))
+
+    def _make_subtitle_surf(self):
+        if os.path.exists(SUBTITLE_IMG_PATH):
+            try:
+                img = pygame.image.load(SUBTITLE_IMG_PATH).convert_alpha()
+                tw = int(self.sw * 0.22)
+                s = tw / img.get_width()
+                return pygame.transform.smoothscale(img, (tw, int(img.get_height() * s)))
+            except pygame.error:
+                pass
+        if SUBTITLE_TEXT:
+            return make_logo(SUBTITLE_TEXT, int(self.sh * 0.05))
+        return None
+
     def draw_title(self, surface):
         if self._logo is None:
-            self._logo = make_logo("CRAFTBOOT", int(self.sh * 0.13))
-        lr = self._logo.get_rect(center=(self.sw // 2, int(self.sh * 0.24)))
+            self._logo = self._make_logo_surf()
+        lr = self._logo.get_rect(center=(self.sw // 2, int(self.sh * 0.22)))
         surface.blit(self._logo, lr)
-        # pulsing, rotated splash overlapping the logo's lower-right corner (like the original)
+        if self._subtitle is False:
+            self._subtitle = self._make_subtitle_surf()
+        if self._subtitle:
+            subr = self._subtitle.get_rect(center=(self.sw // 2, lr.bottom - int(self.sh * 0.01)))
+            surface.blit(self._subtitle, subr)
+            splash_anchor = subr
+        else:
+            splash_anchor = lr
+        # pulsing, rotated splash overlapping the lower-right (like the original)
         pulse = 1.0 + 0.08 * math.sin(pygame.time.get_ticks() / 180.0)
         base = render_shadowed(self.fonts.splash, self.splash_text, SPLASH_YELLOW, SPLASH_SHADOW)
         splash = pygame.transform.rotozoom(base, 18, pulse)
-        sx = lr.left + int(lr.width * 0.82)
-        sy = lr.bottom - int(lr.height * 0.12)
-        sr = splash.get_rect(center=(sx, sy))
-        surface.blit(splash, sr)
+        sx = lr.left + int(lr.width * 0.88)
+        sy = splash_anchor.bottom - int(lr.height * 0.05)
+        surface.blit(splash, splash.get_rect(center=(sx, sy)))
 
     def draw(self, surface):
         self.draw_title(surface)
@@ -414,10 +492,16 @@ def main(argv):
         screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     pygame.mouse.set_visible(True)
 
+    bg_mode = "photos"
+    if "--bg" in argv:
+        i = argv.index("--bg")
+        if i + 1 < len(argv):
+            bg_mode = argv[i + 1]
+
     fonts = Fonts(screen.get_size()[1])
     config = load_config()
     menu = Menu(screen, config, fonts)
-    panorama = Panorama(screen.get_size())
+    panorama = Panorama(screen.get_size(), bg_mode)
     clock = pygame.time.Clock()
 
     state = "menu"
