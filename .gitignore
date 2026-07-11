@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+boot/build/
+*.img
+*.iso

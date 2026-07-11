@@ -1,0 +1,3 @@
+# craftboot dependencies (Milestone 1)
+# pygame-ce is the maintained SDL2 fork; import name is still "pygame".
+pygame-ce>=2.5
