@@ -45,9 +45,11 @@ genkey() {
 
 install() {
     [[ -f "$KEYDIR/MOK.key" ]] || { echo "Run 'sudo $0 genkey' first."; exit 1; }
-    if ! mokutil --list-enrolled 2>/dev/null | grep -q "$CN"; then
-        echo "WARNING: the Craftboot MOK does not appear to be enrolled yet."
-        echo "Have you rebooted and done 'Enroll MOK'? Press Enter to continue anyway, Ctrl-C to abort."
+    if ! mokutil --test-key "$KEYDIR/MOK.der" 2>/dev/null | grep -qi "already enrolled"; then
+        echo "WARNING: the Craftboot MOK is NOT enrolled yet (checked with mokutil --test-key)."
+        echo "Reboot and complete 'Enroll MOK' in the blue MOK Manager screen first."
+        echo "Press Enter to build anyway (craftboot won't BOOT until the key is enrolled),"
+        echo "or Ctrl-C to abort."
         read -r _
     fi
     "$HERE/uki-build.sh" "$(uname -r)"
