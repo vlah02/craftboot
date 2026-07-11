@@ -247,32 +247,35 @@ class Panorama:
 _BTN_TEX = {}
 
 
+def _grain_surface(w, h, base):
+    """Flat grey with fine per-pixel grain, like Minecraft's button texture."""
+    try:
+        import numpy as np
+        noise = np.random.randint(-14, 15, size=(w, h))
+        grad = np.linspace(8, -14, h).astype(int)[None, :]   # subtle top-light/bottom-dark
+        arr = np.clip(base + noise + grad, 45, 215).astype(np.uint8)
+        rgb = np.repeat(arr[:, :, None], 3, axis=2)           # (w, h, 3)
+        return pygame.surfarray.make_surface(rgb)
+    except Exception:
+        surf = pygame.Surface((w, h))
+        surf.fill((base, base, base))
+        for _ in range(w * h // 6):
+            x, y = random.randint(0, w - 1), random.randint(0, h - 1)
+            v = max(45, min(215, base + random.randint(-16, 16)))
+            surf.set_at((x, y), (v, v, v))
+        return surf
+
+
 def make_button_texture(w, h, selected):
-    """Minecraft-style button: vertical grey gradient + faint noise + bevel/border."""
-    top = (172, 172, 172) if selected else (152, 152, 152)
-    bot = (104, 104, 104) if selected else (92, 92, 92)
-    surf = pygame.Surface((w, h))
-    for yy in range(h):
-        f = yy / max(1, h - 1)
-        surf.fill(tuple(int(top[i] * (1 - f) + bot[i] * f) for i in range(3)), (0, yy, w, 1))
-    # faint speckle so it reads as a textured surface, not flat
-    for _ in range(max(30, w * h // 45)):
-        nx, ny = random.randint(0, w - 1), random.randint(0, h - 1)
-        c = 255 if random.random() < 0.5 else 0
-        surf.blit(_speckle(c), (nx, ny))
-    # bevel: light top/left, dark bottom/right, then black border
-    pygame.draw.line(surf, (205, 205, 205), (1, 1), (w - 2, 1))
-    pygame.draw.line(surf, (205, 205, 205), (1, 1), (1, h - 2))
-    pygame.draw.line(surf, (60, 60, 60), (1, h - 2), (w - 2, h - 2))
-    pygame.draw.line(surf, (60, 60, 60), (w - 2, 1), (w - 2, h - 2))
+    """Minecraft-style button: grainy grey face + bevel + dark border."""
+    surf = _grain_surface(w, h, 170 if selected else 150)
+    # bevel highlight (top/left) and shadow (bottom/right)
+    pygame.draw.line(surf, (206, 206, 206), (2, 2), (w - 3, 2))
+    pygame.draw.line(surf, (206, 206, 206), (2, 2), (2, h - 3))
+    pygame.draw.line(surf, (74, 74, 74), (2, h - 3), (w - 3, h - 3))
+    pygame.draw.line(surf, (74, 74, 74), (w - 3, 2), (w - 3, h - 3))
     pygame.draw.rect(surf, (16, 16, 16), surf.get_rect(), width=2)
     return surf
-
-
-def _speckle(c):
-    s = pygame.Surface((1, 1), pygame.SRCALPHA)
-    s.fill((c, c, c, 26))
-    return s
 
 
 def draw_button(surface, rect, surf_text, selected):
