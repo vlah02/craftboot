@@ -215,20 +215,33 @@ class Panorama:
     def __init__(self, screen_size, mode="photos"):
         self.sw, self.sh = screen_size
         self.t = 0.0
-        self.bg_name = None  # basename of the chosen screenshot (photos mode)
-        pano = os.path.join(ASSETS, "panorama360.png")
-        strip = None
-        if mode == "pano" and os.path.exists(pano):
-            try:
-                strip = pygame.image.load(pano).convert()
-            except pygame.error:
-                strip = None
+        self.bg_name = None  # basename of the chosen background (used to match the logo)
+        strip = self._load_random_pano() if mode == "pano" else None
         if strip is not None:
             self.mode = "pano"
             self._init_pano(strip)
         else:
             self.mode = "drift"
             self._init_drift()
+
+    def _load_random_pano(self):
+        """Pick a random 360 panorama world from assets/panoramas/ each boot."""
+        pdir = os.path.join(ASSETS, "panoramas")
+        cands = []
+        if os.path.isdir(pdir):
+            cands = [os.path.join(pdir, f) for f in os.listdir(pdir) if f.lower().endswith(".png")]
+        random.shuffle(cands)
+        cands.append(os.path.join(ASSETS, "panorama360.png"))    # fallback
+        for p in cands:
+            if os.path.exists(p):
+                try:
+                    surf = pygame.image.load(p).convert()
+                    self.bg_name = os.path.basename(p)
+                    print(f"[craftboot] panorama world: {self.bg_name}")
+                    return surf
+                except pygame.error:
+                    continue
+        return None
 
     # -- 360 panorama: perspective projection of a rotating cubemap ----------
     def _init_pano(self, strip):
@@ -256,7 +269,6 @@ class Panorama:
         self.yaw = 0.0
         self.speed = self.EW / PANO_LOOP_SECONDS         # px/sec
         self._surf = pygame.Surface((self.rw, self.rh))
-        print("[craftboot] background: 360 perspective panorama")
 
     def _draw_pano(self, surface):
         import numpy as np

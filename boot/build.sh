@@ -72,6 +72,8 @@ copy_bin /usr/bin/efibootmgr
 
 echo "==> app"
 cp -a "$APP/." "$ROOT/craftboot/"
+# drop assets not needed at boot (photos-mode screenshots + panorama source faces)
+rm -rf "$ROOT/craftboot/assets/backgrounds" "$ROOT/craftboot/assets/panorama_faces"
 find "$ROOT/craftboot" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 
 echo "==> /init"
