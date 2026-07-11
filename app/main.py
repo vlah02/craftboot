@@ -55,10 +55,10 @@ CLASSIC_LOGO = "minecraft_classic.png"  # fallback when the background has no sp
 PHOTO_PAN_SECONDS = 26.0     # seconds for one left->right sweep (photos mode); higher = slower
 PHOTO_MARGIN = 1.5           # scale factor over screen size = how far it pans
 PHOTO_BLUR = 5               # background blur radius ("a little bit blurred")
-PANO_FOV = 100               # horizontal FOV (deg) for the 360 panorama; higher = more skew
-PANO_BLUR = 8                # box-blur radius (equirect px) applied to the panorama
+PANO_FOV = 118               # horizontal FOV (deg); higher = more zoomed-out/skewed
+PANO_BLUR = 0                # box-blur radius (equirect px); 0 = sharp, no blur
 PANO_LOOP_SECONDS = 45.0     # seconds for one full 360 rotation
-PANO_RENDER_SCALE = 0.6      # render the pano at this fraction of screen res, then upscale
+PANO_RENDER_SCALE = 0.8      # render the pano at this fraction of screen res, then upscale
 GRAIN_CELL = 3               # button grain block size in px (bigger = chunkier)
 TIMEOUT_SECONDS = 15         # auto-boot the default entry after this many idle seconds
 
@@ -273,7 +273,7 @@ class Panorama:
 
     def _draw_pano(self, surface):
         import numpy as np
-        col = ((self.base_lon + self.yaw) % self.EW).astype(np.int64)
+        col = ((self.base_lon - self.yaw) % self.EW).astype(np.int64)   # pan the other way
         frame = self.eq[self.lat_idx, col]                    # (rh,rw,3)
         pygame.surfarray.blit_array(
             self._surf, np.ascontiguousarray(np.transpose(frame, (1, 0, 2))))
