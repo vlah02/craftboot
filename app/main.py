@@ -30,6 +30,21 @@ LOGO_DIR = os.path.join(ASSETS, "logos")                  # optional dir of logo
 SUBTITLE_IMG_PATH = os.path.join(ASSETS, "subtitle.png")  # optional pre-made subtitle image
 SUBTITLE_TEXT = "BOOT EDITION"                            # rendered if no subtitle.png present
 
+# Background-filename substring -> logo file in LOGO_DIR (first match wins).
+LOGO_FOR_BG = [
+    ("aquatic", "minecraft_aquatic.png"),
+    ("buzzy", "minecraft_bees.png"),
+    ("bees", "minecraft_bees.png"),
+    ("cliffs", "minecraft_caves.png"),
+    ("caves", "minecraft_caves.png"),
+    ("nether", "minecraft_nether.png"),
+    ("wild", "minecraft_wild.png"),
+    ("trails", "minecraft_trails.png"),
+    ("tales", "minecraft_trails.png"),
+    ("end", "minecraft_end.png"),
+]
+CLASSIC_LOGO = "minecraft_classic.png"  # fallback when the background has no specific logo
+
 # Background modes:
 #   "photos" (default) = random blurred screenshot, slow horizontal pan.
 #   "pano"             = seamless rotating 360 panorama (panorama360.png).
@@ -38,6 +53,7 @@ PHOTO_MARGIN = 1.5           # scale factor over screen size = how far it pans
 PHOTO_BLUR = 5               # background blur radius ("a little bit blurred")
 VIEW_ZOOM = 2.4              # pano mode vertical zoom
 PANO_LOOP_SECONDS = 60.0     # pano mode full-rotation time
+GRAIN_CELL = 3               # button grain block size in px (bigger = chunkier)
 
 
 def blur_surface(surf, radius):
@@ -158,6 +174,7 @@ class Panorama:
     def __init__(self, screen_size, mode="photos"):
         self.sw, self.sh = screen_size
         self.t = 0.0
+        self.bg_name = None  # basename of the chosen screenshot (photos mode)
         pano = os.path.join(ASSETS, "panorama360.png")
         strip = None
         if mode == "pano" and os.path.exists(pano):
@@ -215,8 +232,10 @@ class Panorama:
         for path in candidates:
             if os.path.exists(path):
                 try:
-                    print(f"[craftboot] background: {os.path.basename(path)}")
-                    return pygame.image.load(path).convert()
+                    img = pygame.image.load(path).convert()
+                    self.bg_name = os.path.basename(path)
+                    print(f"[craftboot] background: {self.bg_name}")
+                    return img
                 except pygame.error:
                     continue
         surf = pygame.Surface((self.sw, self.sh))
@@ -248,22 +267,21 @@ _BTN_TEX = {}
 
 
 def _grain_surface(w, h, base):
-    """Flat grey with fine per-pixel grain, like Minecraft's button texture."""
+    """Flat grey with chunky blocky grain (generated small, nearest-scaled up),
+    like Minecraft's upscaled texture."""
+    gw, gh = max(1, w // GRAIN_CELL), max(1, h // GRAIN_CELL)
     try:
         import numpy as np
-        noise = np.random.randint(-14, 15, size=(w, h))
-        grad = np.linspace(8, -14, h).astype(int)[None, :]   # subtle top-light/bottom-dark
-        arr = np.clip(base + noise + grad, 45, 215).astype(np.uint8)
-        rgb = np.repeat(arr[:, :, None], 3, axis=2)           # (w, h, 3)
-        return pygame.surfarray.make_surface(rgb)
+        noise = np.random.randint(-20, 21, size=(gw, gh))
+        arr = np.clip(base + noise, 45, 215).astype(np.uint8)
+        small = pygame.surfarray.make_surface(np.repeat(arr[:, :, None], 3, axis=2))
     except Exception:
-        surf = pygame.Surface((w, h))
-        surf.fill((base, base, base))
-        for _ in range(w * h // 6):
-            x, y = random.randint(0, w - 1), random.randint(0, h - 1)
-            v = max(45, min(215, base + random.randint(-16, 16)))
-            surf.set_at((x, y), (v, v, v))
-        return surf
+        small = pygame.Surface((gw, gh))
+        for x in range(gw):
+            for y in range(gh):
+                v = max(45, min(215, base + random.randint(-20, 20)))
+                small.set_at((x, y), (v, v, v))
+    return pygame.transform.scale(small, (w, h))  # nearest-neighbour -> blocky grain
 
 
 def make_button_texture(w, h, selected):
@@ -300,7 +318,7 @@ def draw_button(surface, rect, surf_text, selected):
 
 
 class Menu:
-    def __init__(self, screen, config, fonts):
+    def __init__(self, screen, config, fonts, bg_name=None):
         self.screen = screen
         self.config = config
         self.fonts = fonts
@@ -310,6 +328,7 @@ class Menu:
         self.splash_text = random.choice(load_splashes())
         self._btn_cache = {}
         self._rects = []
+        self._bg_name = bg_name
         self._logo = None
         self._logo_from_image = False
         self._subtitle = False  # False = not built yet; may resolve to a surface or None
@@ -376,16 +395,26 @@ class Menu:
         return False
 
     # ---- draw -------------------------------------------------------------
-    def _make_logo_surf(self):
-        # priority: random from logos/ dir -> logo.png -> procedural
-        candidates = []
+    def _pick_logo_path(self):
+        # match the current background; else classic; else any png; else logo.png
         if os.path.isdir(LOGO_DIR):
-            candidates = [os.path.join(LOGO_DIR, f) for f in os.listdir(LOGO_DIR)
-                          if f.lower().endswith(".png")]
-        if not candidates and os.path.exists(LOGO_IMG_PATH):
-            candidates = [LOGO_IMG_PATH]
-        random.shuffle(candidates)
-        for path in candidates:
+            names = set(os.listdir(LOGO_DIR))
+            bg = (self._bg_name or "").lower()
+            for key, logo in LOGO_FOR_BG:
+                if key in bg and logo in names:
+                    return os.path.join(LOGO_DIR, logo)
+            if CLASSIC_LOGO in names:
+                return os.path.join(LOGO_DIR, CLASSIC_LOGO)
+            pngs = sorted(n for n in names if n.lower().endswith(".png"))
+            if pngs:
+                return os.path.join(LOGO_DIR, random.choice(pngs))
+        if os.path.exists(LOGO_IMG_PATH):
+            return LOGO_IMG_PATH
+        return None
+
+    def _make_logo_surf(self):
+        path = self._pick_logo_path()
+        if path:
             try:
                 img = pygame.image.load(path).convert_alpha()
                 tw = int(self.sw * 0.55)
@@ -394,7 +423,7 @@ class Menu:
                 print(f"[craftboot] logo: {os.path.basename(path)}")
                 return pygame.transform.smoothscale(img, (tw, int(img.get_height() * s)))
             except pygame.error:
-                continue
+                pass
         self._logo_from_image = False
         return make_logo("CRAFTBOOT", int(self.sh * 0.13))
 
@@ -526,8 +555,8 @@ def main(argv):
 
     fonts = Fonts(screen.get_size()[1])
     config = load_config()
-    menu = Menu(screen, config, fonts)
     panorama = Panorama(screen.get_size(), bg_mode)
+    menu = Menu(screen, config, fonts, bg_name=panorama.bg_name)
     clock = pygame.time.Clock()
 
     state = "menu"
