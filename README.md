@@ -94,13 +94,30 @@ Controls: **Up/Down** (or mouse) to move, **Enter/click** to select, **Esc** to 
 back / quit. Selecting Windows/Ubuntu plays the loading animation, prints the
 intended boot action to the terminal, and exits — it does not boot anything yet.
 
-A random background is chosen from `app/assets/backgrounds/` each launch. Pan
-speed is tunable via `PAN_SPEED_X` / `PAN_SPEED_Y` at the top of `main.py`.
+The background is a **seamless rotating 360° panorama** built from the real
+Minecraft cubemap faces (`app/assets/panorama360.png`), scrolled with wraparound
+and a gentle vertical bob — tunables `VIEW_ZOOM` / `PANO_LOOP_SECONDS` in `main.py`.
+If that PNG is absent it falls back to a random drifting screenshot from
+`app/assets/backgrounds/`.
+
+To regenerate the panorama from the 6 cube faces (e.g. to swap in a different
+world), edit/replace `app/assets/panorama_faces/panorama_0..5.png` and run:
+
+```bash
+python3 scripts/build_panorama.py app/assets/panorama_faces app/assets/panorama360.png
+```
+
+> Note: full 3D perspective/pitch (true cubemap projection) would need an OpenGL
+> renderer; this equirectangular scroll gives the seamless horizontal rotation in
+> pure pygame, which stays portable to the minimal-Linux boot environment.
 
 ## Credits / licenses
 
 - **Minecrafter** logo font by **MadPixel / PurePixel** — Creative Commons,
   non-commercial use, shipped with its license (`app/assets/fonts/Minecrafter-License.txt`).
+- Panorama cube faces from **Nixinova/Original-Panorama** (the original Minecraft
+  title panorama as a resource pack), converted to equirectangular by
+  `scripts/build_panorama.py`.
 - Minecraft in-game font and background screenshots reused from the minegrub
-  theme; Minecraft is a trademark of Mojang/Microsoft — this project is unofficial
-  and not affiliated with Mojang.
+  theme; Minecraft is a trademark of Mojang/Microsoft — this project is unofficial,
+  not affiliated with Mojang, and these assets are bundled for personal use only.

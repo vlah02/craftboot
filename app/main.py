@@ -26,9 +26,12 @@ ASSETS = os.path.join(HERE, "assets")
 FONT_PATH = os.path.join(ASSETS, "minecraft.otf")
 LOGO_FONT_PATH = os.path.join(ASSETS, "fonts", "Minecrafter.Reg.ttf")
 
-# Eased drift speeds (radians/sec) for the panning panorama. Higher = faster pan.
+# Fallback screenshot drift speeds (radians/sec) when no 360 panorama is present.
 PAN_SPEED_X = 0.30
 PAN_SPEED_Y = 0.18
+# 360 panorama: vertical zoom (higher = narrower vertical FOV) and full-loop time.
+VIEW_ZOOM = 2.4
+PANO_LOOP_SECONDS = 60.0
 
 # ---- Minecraft-ish palette -------------------------------------------------
 WHITE = (255, 255, 255)
@@ -130,21 +133,55 @@ def make_logo(text, size):
 
 
 class Panorama:
-    """A random Minecraft screenshot, gently drifting in 2D (no seams)."""
+    """Rotating 360 panorama (from the real Minecraft cubemap, as a seamless
+    equirectangular scroll). Falls back to a drifting screenshot if that PNG
+    is missing."""
 
     def __init__(self, screen_size):
         self.sw, self.sh = screen_size
+        self.t = 0.0
+        pano = os.path.join(ASSETS, "panorama360.png")
+        strip = None
+        if os.path.exists(pano):
+            try:
+                strip = pygame.image.load(pano).convert()
+            except pygame.error:
+                strip = None
+        if strip is not None:
+            self.mode = "pano"
+            scaled_h = int(self.sh * VIEW_ZOOM)
+            scale = scaled_h / strip.get_height()
+            self.strip = pygame.transform.smoothscale(
+                strip, (int(strip.get_width() * scale), scaled_h)
+            )
+            self.strip_w = self.strip.get_width()
+            self.max_y = max(0, self.strip.get_height() - self.sh)
+            self.speed = self.strip_w / PANO_LOOP_SECONDS
+            self.x = 0.0
+            print("[craftboot] background: 360 panorama")
+        else:
+            self.mode = "drift"
+            self._init_drift()
+
+    # -- 360 panorama --------------------------------------------------------
+    def _draw_pano(self, surface):
+        yc = self.max_y * 0.5
+        y = -int(max(0, min(self.max_y, yc + math.sin(self.t * 0.15) * self.max_y * 0.4)))
+        x0 = -int(self.x)
+        surface.blit(self.strip, (x0, y))
+        if x0 + self.strip_w < self.sw:  # wrap seam
+            surface.blit(self.strip, (x0 + self.strip_w, y))
+
+    # -- fallback: drifting screenshot --------------------------------------
+    def _init_drift(self):
         img = self._pick_image()
-        # Cover the screen, then add ~35% slack in both axes to drift within.
-        margin = 1.35
         cover = max(self.sw / img.get_width(), self.sh / img.get_height())
-        scale = cover * margin
+        scale = cover * 1.35
         self.img = pygame.transform.smoothscale(
             img, (int(img.get_width() * scale), int(img.get_height() * scale))
         )
         self.slack_x = max(1, self.img.get_width() - self.sw)
         self.slack_y = max(1, self.img.get_height() - self.sh)
-        self.t = 0.0
 
     def _pick_image(self):
         candidates = []
@@ -155,7 +192,7 @@ class Panorama:
                 if f.lower().endswith((".png", ".jpg", ".jpeg"))
             ]
         random.shuffle(candidates)
-        candidates.append(os.path.join(ASSETS, "panorama.png"))  # fallback
+        candidates.append(os.path.join(ASSETS, "panorama.png"))
         for path in candidates:
             if os.path.exists(path):
                 try:
@@ -167,14 +204,22 @@ class Panorama:
         surf.fill((90, 120, 160))
         return surf
 
-    def update(self, dt):
-        self.t += dt
-
-    def draw(self, surface):
-        # eased 2D ping-pong; the image is larger than the screen so no seams show
+    def _draw_drift(self, surface):
         fx = (1 - math.cos(self.t * PAN_SPEED_X)) / 2
         fy = (1 - math.cos(self.t * PAN_SPEED_Y)) / 2
         surface.blit(self.img, (-int(fx * self.slack_x), -int(fy * self.slack_y)))
+
+    # -- shared --------------------------------------------------------------
+    def update(self, dt):
+        self.t += dt
+        if self.mode == "pano":
+            self.x = (self.x + dt * self.speed) % self.strip_w
+
+    def draw(self, surface):
+        if self.mode == "pano":
+            self._draw_pano(surface)
+        else:
+            self._draw_drift(surface)
 
 
 def draw_button(surface, rect, surf_text, selected):
