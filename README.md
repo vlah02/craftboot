@@ -101,10 +101,16 @@ intended boot action to the terminal, and exits — it does not boot anything ye
 - **pano**: the seamless rotating 360° panorama built from the real cubemap
   (`panorama360.png`, tunables `VIEW_ZOOM` / `PANO_LOOP_SECONDS`).
 
-**Logo**: drop a pre-made 3D logo PNG at `app/assets/logo.png` (e.g. generated on
-textcraft.net) and it's used automatically; otherwise a procedural Minecrafter-font
-logo is drawn. A subtitle is shown under it — `app/assets/subtitle.png` if present,
-else the text in `SUBTITLE_TEXT` (default "BOOT EDITION").
+**Logo** (priority order):
+1. random PNG from `app/assets/logos/` (drop several themed logos here and one is
+   picked each launch — e.g. from 3dtext.easecation.net or textcraft.net),
+2. else a single `app/assets/logo.png`,
+3. else a procedural Minecrafter-font logo.
+
+Pre-made logo images usually bake in their own subtitle, so the separate subtitle
+is only drawn for the procedural logo (or when you provide `app/assets/subtitle.png`
+explicitly). `SUBTITLE_TEXT` (default "BOOT EDITION") controls the procedural one.
+Use transparent-background PNGs so they sit over the background.
 
 To regenerate the panorama from the 6 cube faces (e.g. to swap in a different
 world), edit/replace `app/assets/panorama_faces/panorama_0..5.png` and run:

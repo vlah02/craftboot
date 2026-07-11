@@ -25,14 +25,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(HERE, "assets")
 FONT_PATH = os.path.join(ASSETS, "minecraft.otf")
 LOGO_FONT_PATH = os.path.join(ASSETS, "fonts", "Minecrafter.Reg.ttf")
-LOGO_IMG_PATH = os.path.join(ASSETS, "logo.png")          # optional pre-made 3D logo (textcraft.net)
+LOGO_IMG_PATH = os.path.join(ASSETS, "logo.png")          # optional pre-made 3D logo (textcraft/easecation)
+LOGO_DIR = os.path.join(ASSETS, "logos")                  # optional dir of logo PNGs; one picked at random
 SUBTITLE_IMG_PATH = os.path.join(ASSETS, "subtitle.png")  # optional pre-made subtitle image
 SUBTITLE_TEXT = "BOOT EDITION"                            # rendered if no subtitle.png present
 
 # Background modes:
 #   "photos" (default) = random blurred screenshot, slow horizontal pan.
 #   "pano"             = seamless rotating 360 panorama (panorama360.png).
-PAN_SPEED_X = 0.28           # eased horizontal pan speed (photos mode)
+PHOTO_PAN_SECONDS = 26.0     # seconds for one left->right sweep (photos mode); higher = slower
 PHOTO_MARGIN = 1.5           # scale factor over screen size = how far it pans
 PHOTO_BLUR = 5               # background blur radius ("a little bit blurred")
 VIEW_ZOOM = 2.4              # pano mode vertical zoom
@@ -223,10 +224,12 @@ class Panorama:
         return surf
 
     def _draw_drift(self, surface):
-        # slow horizontal pan (eased ping-pong), vertical held at centre
-        fx = (1 - math.cos(self.t * PAN_SPEED_X)) / 2
+        # constant-speed horizontal ping-pong (moves immediately, no eased-in delay)
+        period = 2 * PHOTO_PAN_SECONDS
+        p = (self.t % period) / period
+        f = 2 * p if p < 0.5 else 2 * (1 - p)  # linear 0 -> 1 -> 0
         y = -(self.slack_y // 2)
-        surface.blit(self.img, (-int(fx * self.slack_x), y))
+        surface.blit(self.img, (-int(f * self.slack_x), y))
 
     # -- shared --------------------------------------------------------------
     def update(self, dt):
@@ -296,6 +299,7 @@ class Menu:
         self._btn_cache = {}
         self._rects = []
         self._logo = None
+        self._logo_from_image = False
         self._subtitle = False  # False = not built yet; may resolve to a surface or None
         self._layout()
 
@@ -361,17 +365,30 @@ class Menu:
 
     # ---- draw -------------------------------------------------------------
     def _make_logo_surf(self):
-        if os.path.exists(LOGO_IMG_PATH):
+        # priority: random from logos/ dir -> logo.png -> procedural
+        candidates = []
+        if os.path.isdir(LOGO_DIR):
+            candidates = [os.path.join(LOGO_DIR, f) for f in os.listdir(LOGO_DIR)
+                          if f.lower().endswith(".png")]
+        if not candidates and os.path.exists(LOGO_IMG_PATH):
+            candidates = [LOGO_IMG_PATH]
+        random.shuffle(candidates)
+        for path in candidates:
             try:
-                img = pygame.image.load(LOGO_IMG_PATH).convert_alpha()
+                img = pygame.image.load(path).convert_alpha()
                 tw = int(self.sw * 0.55)
                 s = tw / img.get_width()
+                self._logo_from_image = True
+                print(f"[craftboot] logo: {os.path.basename(path)}")
                 return pygame.transform.smoothscale(img, (tw, int(img.get_height() * s)))
             except pygame.error:
-                pass
+                continue
+        self._logo_from_image = False
         return make_logo("CRAFTBOOT", int(self.sh * 0.13))
 
     def _make_subtitle_surf(self):
+        # An explicit subtitle.png always wins. Otherwise only draw the text
+        # subtitle for the procedural logo (image logos bake in their own).
         if os.path.exists(SUBTITLE_IMG_PATH):
             try:
                 img = pygame.image.load(SUBTITLE_IMG_PATH).convert_alpha()
@@ -380,29 +397,26 @@ class Menu:
                 return pygame.transform.smoothscale(img, (tw, int(img.get_height() * s)))
             except pygame.error:
                 pass
-        if SUBTITLE_TEXT:
+        if SUBTITLE_TEXT and not self._logo_from_image:
             return make_logo(SUBTITLE_TEXT, int(self.sh * 0.05))
         return None
 
     def draw_title(self, surface):
         if self._logo is None:
             self._logo = self._make_logo_surf()
-        lr = self._logo.get_rect(center=(self.sw // 2, int(self.sh * 0.22)))
+        lr = self._logo.get_rect(center=(self.sw // 2, int(self.sh * 0.24)))
         surface.blit(self._logo, lr)
         if self._subtitle is False:
             self._subtitle = self._make_subtitle_surf()
         if self._subtitle:
             subr = self._subtitle.get_rect(center=(self.sw // 2, lr.bottom - int(self.sh * 0.01)))
             surface.blit(self._subtitle, subr)
-            splash_anchor = subr
-        else:
-            splash_anchor = lr
-        # pulsing, rotated splash overlapping the lower-right (like the original)
+        # pulsing, rotated splash to the lower-right of the title
         pulse = 1.0 + 0.08 * math.sin(pygame.time.get_ticks() / 180.0)
         base = render_shadowed(self.fonts.splash, self.splash_text, SPLASH_YELLOW, SPLASH_SHADOW)
         splash = pygame.transform.rotozoom(base, 18, pulse)
-        sx = lr.left + int(lr.width * 0.88)
-        sy = splash_anchor.bottom - int(lr.height * 0.05)
+        sx = lr.left + int(lr.width * 0.90)
+        sy = lr.centery + int(lr.height * 0.12)
         surface.blit(splash, splash.get_rect(center=(sx, sy)))
 
     def draw(self, surface):
