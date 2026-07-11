@@ -15,7 +15,7 @@ from PIL import Image
 
 def main():
     facedir = sys.argv[1] if len(sys.argv) > 1 else "."
-    out = sys.argv[2] if len(sys.argv) > 2 else "panorama360.png"
+    out = sys.argv[2] if len(sys.argv) > 2 else "panorama.png"
     W = int(sys.argv[3]) if len(sys.argv) > 3 else 2400
     H = int(sys.argv[4]) if len(sys.argv) > 4 else 1200
 

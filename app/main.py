@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-craftboot - a Minecraft-style graphical boot menu (Milestone 1: visuals only).
+craftboot - a Minecraft-style graphical boot menu.
 
-This prototype renders the menu, the panning panorama, the pulsing splash text,
-and the "Building terrain" loading animation. It does NOT boot anything yet:
-selecting Windows/Ubuntu just plays the loading animation and prints the action.
-Handoff (kexec / efibootmgr) comes in a later milestone.
+Renders a rotating 360 panorama, Minecraft buttons, splash text, and a loading
+animation, then hands off to the selected OS (Ubuntu via kexec / Windows via
+efibootmgr BootNext). See README.md for the full architecture and setup.
 
-Run on your desktop for development:
-    python3 app/main.py --windowed
-    python3 app/main.py                # fullscreen
+Modes:
+    python3 app/main.py --windowed      desktop dev window
+    python3 app/main.py --fb [--live]   framebuffer/KMS + evdev (the boot env);
+                                        --live actually boots, else dry-run.
 
 Controls: Up/Down or mouse to move, Enter/click to select, Esc to go back / quit.
 """
@@ -34,47 +34,36 @@ BUTTON_HOVER_IMG = os.path.join(ASSETS, "button_highlighted.png")
 SUBTITLE_IMG_PATH = os.path.join(ASSETS, "subtitle.png")  # optional pre-made subtitle image
 SUBTITLE_TEXT = "BOOT EDITION"                            # rendered if no subtitle.png present
 
-# Background-filename substring -> logo file in LOGO_DIR (first match wins).
-LOGO_FOR_BG = [
-    ("aquatic", "minecraft_aquatic.png"),
-    ("buzzy", "minecraft_bees.png"),
-    ("bees", "minecraft_bees.png"),
-    ("cliffs", "minecraft_caves.png"),
-    ("caves", "minecraft_caves.png"),
-    ("nether", "minecraft_nether.png"),
-    ("wild", "minecraft_wild.png"),
-    ("trails", "minecraft_trails.png"),
-    ("tales", "minecraft_trails.png"),
-    ("end", "minecraft_end.png"),
-]
+# Exact panorama stem (filename without .png) -> logo file in LOGO_DIR.
+# Every panorama is an official per-version title screen (see stem -> update below).
+LOGO_FOR_BG = {
+    "1.12_classic":          "minecraft_classic.png",   # default title (~1.8-1.12)
+    "1.13_aquatic":          "minecraft_aquatic.png",   # Update Aquatic
+    "1.14_village":          "minecraft_village.png",    # Village & Pillage
+    "1.15_bees":             "minecraft_bees.png",       # Buzzy Bees
+    "1.16_nether":           "minecraft_nether.png",     # Nether Update
+    "1.17_cliffs":           "minecraft_cliffs.png",     # Caves & Cliffs Part I
+    "1.18_caves":            "minecraft_caves.png",      # Caves & Cliffs Part II
+    "1.19_wild":             "minecraft_wild.png",       # The Wild Update
+    "1.20_trails":           "minecraft_trails.png",     # Trails & Tales
+    "1.21.00_tricky_trials": "minecraft_trials.png",     # Tricky Trials
+    "1.21.04_pale_garden":   "minecraft_garden.png",     # The Garden Awakens
+    "1.21.05_spring":        "minecraft_spring.png",     # Spring to Life
+    "1.21.06_skies":         "minecraft_skies.png",      # Chase the Skies
+    "1.21.09_copper":        "minecraft_copper.png",     # The Copper Age
+    "1.21.11_mounts":        "minecraft_mounts.png",     # Mounts of Mayhem
+}
 CLASSIC_LOGO = "minecraft_classic.png"  # fallback when the background has no specific logo
 
-# Background modes:
-#   "photos" (default) = random blurred screenshot, slow horizontal pan.
-#   "pano"             = seamless rotating 360 panorama (panorama360.png).
-PHOTO_PAN_SECONDS = 26.0     # seconds for one left->right sweep (photos mode); higher = slower
-PHOTO_MARGIN = 1.5           # scale factor over screen size = how far it pans
-PHOTO_BLUR = 5               # background blur radius ("a little bit blurred")
-PANO_FOV = 130               # horizontal FOV (deg); higher = more zoomed-out/skewed
+# Panorama tunables (the rotating 360 background). See CONTRIBUTING in the README.
+PANO_FOV = 140               # horizontal FOV (deg); higher = more zoomed-out/skewed
 PANO_BLUR = 0                # box-blur radius (equirect px); 0 = sharp, no blur
-PANO_LOOP_SECONDS = 65.0     # seconds for one full 360 rotation (higher = slower)
-PANO_START = 0.25            # fixed starting angle as a fraction of the full turn (0..1)
-PANO_RENDER_SCALE = 0.8      # render the pano at this fraction of screen res, then upscale
+PANO_LOOP_SECONDS = 140.0    # seconds for one full 360 rotation (higher = slower)
+PANO_START = 0.7             # fixed starting angle as a fraction of the full turn (0..1)
+PANO_RENDER_SCALE = 0.5      # render pano at this fraction of screen res, then bilinear-upscale
+                             # (bilinear sampling is CPU-heavy; 0.5 ~= 30fps, 1.0 ~= 5fps)
 GRAIN_CELL = 3               # button grain block size in px (bigger = chunkier)
 TIMEOUT_SECONDS = 15         # auto-boot the default entry after this many idle seconds
-
-
-def blur_surface(surf, radius):
-    """Mild blur; uses pygame-ce's gaussian_blur, falls back to a scale trick."""
-    if radius <= 0:
-        return surf
-    try:
-        return pygame.transform.gaussian_blur(surf, radius)
-    except (AttributeError, pygame.error, TypeError):
-        w, h = surf.get_size()
-        f = max(2, int(radius))          # bigger radius -> more blur (downscale/upscale)
-        small = pygame.transform.smoothscale(surf, (max(1, w // f), max(1, h // f)))
-        return pygame.transform.smoothscale(small, (w, h))
 
 
 def _box_blur_np(arr, r):
@@ -209,21 +198,23 @@ def make_logo(text, size):
 
 
 class Panorama:
-    """Rotating 360 panorama (from the real Minecraft cubemap, as a seamless
-    equirectangular scroll). Falls back to a drifting screenshot if that PNG
-    is missing."""
+    """Rotating 360 panorama: a real Minecraft cubemap rendered as a seamless
+    equirectangular scroll with a perspective projection. A random world is
+    picked from assets/panoramas/ each boot; if none can be loaded it falls back
+    to a solid fill."""
 
-    def __init__(self, screen_size, mode="photos"):
+    SOLID_BG = (24, 26, 32)
+
+    def __init__(self, screen_size):
         self.sw, self.sh = screen_size
         self.t = 0.0
-        self.bg_name = None  # basename of the chosen background (used to match the logo)
-        strip = self._load_random_pano() if mode == "pano" else None
+        self.bg_name = None  # basename of the chosen world (used to match the logo)
+        strip = self._load_random_pano()
         if strip is not None:
             self.mode = "pano"
             self._init_pano(strip)
         else:
-            self.mode = "drift"
-            self._init_drift()
+            self.mode = "solid"
 
     def _load_random_pano(self):
         """Pick a random 360 panorama world from assets/panoramas/ each boot."""
@@ -233,16 +224,14 @@ class Panorama:
             cands = [os.path.join(pdir, f) for f in os.listdir(pdir) if f.lower().endswith(".png")]
         print(f"[craftboot] {len(cands)} panorama worlds available")
         random.shuffle(cands)
-        cands.append(os.path.join(ASSETS, "panorama360.png"))    # fallback
         for p in cands:
-            if os.path.exists(p):
-                try:
-                    surf = pygame.image.load(p).convert()
-                    self.bg_name = os.path.basename(p)
-                    print(f"[craftboot] panorama world: {self.bg_name}")
-                    return surf
-                except pygame.error:
-                    continue
+            try:
+                surf = pygame.image.load(p).convert()
+                self.bg_name = os.path.basename(p)
+                print(f"[craftboot] panorama world: {self.bg_name}")
+                return surf
+            except pygame.error:
+                continue
         return None
 
     # -- 360 panorama: perspective projection of a rotating cubemap ----------
@@ -265,64 +254,33 @@ class Panorama:
         Z = np.ones_like(X)
         lon = np.arctan2(X, Z)
         lat = np.arctan2(Y, np.sqrt(X * X + Z * Z))
-        self.lat_idx = np.clip(((0.5 - lat / math.pi) * self.EH).astype(np.int64),
-                               0, self.EH - 1)
-        self.base_lon = (lon / (2 * math.pi)) * self.EW  # relative longitude (px)
+        # vertical (lat) bilinear factors are static -> precompute the two rows + weight
+        row_f = np.clip((0.5 - lat / math.pi) * self.EH, 0, self.EH - 1)  # (rh,rw) float
+        self.lat0 = np.floor(row_f).astype(np.int64)
+        self.lat1 = np.minimum(self.lat0 + 1, self.EH - 1)
+        self.wv = (row_f - self.lat0)[..., None].astype(np.float32)       # (rh,rw,1)
+        self.base_lon = (lon / (2 * math.pi)) * self.EW  # relative longitude (px), float
         self.yaw = PANO_START * self.EW                  # fixed starting angle
         self.speed = self.EW / PANO_LOOP_SECONDS         # px/sec
         self._surf = pygame.Surface((self.rw, self.rh))
 
     def _draw_pano(self, surface):
         import numpy as np
-        col = ((self.base_lon + self.yaw) % self.EW).astype(np.int64)   # camera pans right
-        frame = self.eq[self.lat_idx, col]                    # (rh,rw,3)
+        # horizontal (lon) bilinear: interpolate between two columns, wrapping at the seam
+        col_f = (self.base_lon + self.yaw) % self.EW          # (rh,rw) float; pans right
+        col0 = np.floor(col_f).astype(np.int64)
+        col1 = col0 + 1
+        col1[col1 >= self.EW] = 0                             # wraparound (seamless 360)
+        wu = (col_f - col0)[..., None].astype(np.float32)     # (rh,rw,1)
+        e, l0, l1 = self.eq, self.lat0, self.lat1
+        p00 = e[l0, col0].astype(np.float32); p01 = e[l0, col1].astype(np.float32)  # 4-tap
+        p10 = e[l1, col0].astype(np.float32); p11 = e[l1, col1].astype(np.float32)
+        top = p00 + (p01 - p00) * wu
+        bot = p10 + (p11 - p10) * wu
+        frame = (top + (bot - top) * self.wv).astype(np.uint8)   # (rh,rw,3)
         pygame.surfarray.blit_array(
             self._surf, np.ascontiguousarray(np.transpose(frame, (1, 0, 2))))
-        # smoothscale upscale also softens the nearest-sampled steps
         surface.blit(pygame.transform.smoothscale(self._surf, (self.sw, self.sh)), (0, 0))
-
-    # -- fallback: drifting screenshot --------------------------------------
-    def _init_drift(self):
-        img = self._pick_image()
-        cover = max(self.sw / img.get_width(), self.sh / img.get_height())
-        scale = cover * PHOTO_MARGIN
-        img = pygame.transform.smoothscale(
-            img, (int(img.get_width() * scale), int(img.get_height() * scale))
-        )
-        self.img = blur_surface(img, PHOTO_BLUR)
-        self.slack_x = max(1, self.img.get_width() - self.sw)
-        self.slack_y = max(1, self.img.get_height() - self.sh)
-
-    def _pick_image(self):
-        candidates = []
-        bgdir = os.path.join(ASSETS, "backgrounds")
-        if os.path.isdir(bgdir):
-            candidates = [
-                os.path.join(bgdir, f) for f in os.listdir(bgdir)
-                if f.lower().endswith((".png", ".jpg", ".jpeg"))
-            ]
-        random.shuffle(candidates)
-        candidates.append(os.path.join(ASSETS, "panorama.png"))
-        for path in candidates:
-            if os.path.exists(path):
-                try:
-                    img = pygame.image.load(path).convert()
-                    self.bg_name = os.path.basename(path)
-                    print(f"[craftboot] background: {self.bg_name}")
-                    return img
-                except pygame.error:
-                    continue
-        surf = pygame.Surface((self.sw, self.sh))
-        surf.fill((90, 120, 160))
-        return surf
-
-    def _draw_drift(self, surface):
-        # constant-speed horizontal ping-pong (moves immediately, no eased-in delay)
-        period = 2 * PHOTO_PAN_SECONDS
-        p = (self.t % period) / period
-        f = 2 * p if p < 0.5 else 2 * (1 - p)  # linear 0 -> 1 -> 0
-        y = -(self.slack_y // 2)
-        surface.blit(self.img, (-int(f * self.slack_x), y))
 
     # -- shared --------------------------------------------------------------
     def update(self, dt):
@@ -334,7 +292,7 @@ class Panorama:
         if self.mode == "pano":
             self._draw_pano(surface)
         else:
-            self._draw_drift(surface)
+            surface.fill(self.SOLID_BG)
 
 
 _BTN_TEX = {}
@@ -500,10 +458,10 @@ class Menu:
         # match the current background; else classic; else any png; else logo.png
         if os.path.isdir(LOGO_DIR):
             names = set(os.listdir(LOGO_DIR))
-            bg = (self._bg_name or "").lower()
-            for key, logo in LOGO_FOR_BG:
-                if key in bg and logo in names:
-                    return os.path.join(LOGO_DIR, logo)
+            bg = os.path.splitext(self._bg_name or "")[0].lower()   # exact panorama stem
+            logo = LOGO_FOR_BG.get(bg)
+            if logo and logo in names:
+                return os.path.join(LOGO_DIR, logo)
             if CLASSIC_LOGO in names:
                 return os.path.join(LOGO_DIR, CLASSIC_LOGO)
             pngs = sorted(n for n in names if n.lower().endswith(".png"))
@@ -814,11 +772,6 @@ def main(argv):
     random.seed(os.urandom(16))       # robust per-boot randomness (early-boot entropy)
     fb_mode = "--fb" in argv          # render to the screen (KMS/fbdev) + evdev input
     windowed = "--windowed" in argv
-    bg_mode = "pano"        # default: the rotating 360 perspective panorama
-    if "--bg" in argv:
-        i = argv.index("--bg")
-        if i + 1 < len(argv):
-            bg_mode = argv[i + 1]
     live = "--live" in argv           # actually boot on selection; else dry-run
 
     fb = kbd = None
@@ -840,7 +793,7 @@ def main(argv):
 
     fonts = Fonts(screen.get_size()[1])
     config = load_config()
-    panorama = Panorama(screen.get_size(), bg_mode)
+    panorama = Panorama(screen.get_size())
     menu = Menu(screen, config, fonts, bg_name=panorama.bg_name)
     clock = pygame.time.Clock()
 

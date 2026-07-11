@@ -1,7 +1,11 @@
-# craftboot dependencies (Milestone 1)
+# craftboot dependencies
 # pygame-ce is the maintained SDL2 fork; import name is still "pygame".
-# (Classic "pygame" also works; the app degrades gracefully without gaussian_blur.)
+# (Classic "pygame" also works.)
 pygame-ce>=2.5
-# numpy speeds up the button grain + is required by scripts/build_panorama.py.
-# The app falls back to a pure-python grain if numpy is missing.
+# numpy is required by the panorama renderer + scripts/build_panorama.py, and
+# speeds up the button grain (which falls back to pure-python if numpy is missing).
 numpy>=1.24
+# Pillow is only needed by scripts/build_panorama.py (the contributor tool that
+# converts cubemap faces -> equirectangular). The app itself does not import it.
+Pillow>=9.0
+
