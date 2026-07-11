@@ -114,10 +114,13 @@ bilinear-upscaled for speed (CPU-only numpy). See [Panorama tunables](#panorama-
 
 ### The handoff
 
-| Target  | Mechanism | Seamless? |
-|---------|-----------|-----------|
-| **Ubuntu**  | `kexec -s -l` the real signed kernel + initrd, then `kexec -e` | ✅ yes, no firmware reboot |
-| **Windows** | `efibootmgr --bootnext <win>` then `reboot` | ❌ a reboot happens (firmware/Windows own the screen after); the loading animation plays *before* it |
+The loading screen plays, then control passes straight to the selected OS — a
+smooth handoff either way:
+
+| Target  | Mechanism | |
+|---------|-----------|---|
+| **Ubuntu**  | `kexec -s -l` the real signed kernel + initrd, then `kexec -e` | ✅ seamless |
+| **Windows** | `efibootmgr --bootnext <win>`, then reboot into the Windows Boot Manager | ✅ seamless |
 | **UEFI**    | reboot into firmware setup | — |
 
 Handoff is **dry-run** unless the app is launched with `--live` (it is, inside the
