@@ -86,32 +86,46 @@ def render_shadowed(font, text, color=WHITE, shadow=SHADOW, off=2):
     return surf
 
 
+def _stone_texture(w, h):
+    """Procedural blocky grey 'stone' fill for the logo face."""
+    tex = pygame.Surface((w, h), pygame.SRCALPHA)
+    block = 4
+    for y in range(0, h, block):
+        for x in range(0, w, block):
+            v = max(70, min(200, 145 + random.randint(-32, 42)))
+            tex.fill((v, v, v, 255), (x, y, block, block))
+    return tex
+
+
 def make_logo(text, size):
-    """Render a Minecraft-title-style 3D wordmark using the Minecrafter font."""
+    """Minecraft-title-style wordmark: stone-textured face, black outline, 3D depth."""
     if os.path.exists(LOGO_FONT_PATH):
         font = pygame.font.Font(LOGO_FONT_PATH, size)
     elif os.path.exists(FONT_PATH):
         font = pygame.font.Font(FONT_PATH, size)
     else:
         font = pygame.font.SysFont("monospace", size)
-    face = font.render(text, True, (200, 200, 200))
-    dark = font.render(text, True, (45, 45, 45))
-    hi = font.render(text, True, (240, 240, 240))
-    w, h = face.get_size()
-    depth = max(2, size // 10)
-    pad = depth + 10
+    mask = font.render(text, True, (255, 255, 255))   # glyph shape (per-pixel alpha)
+    black = font.render(text, True, (0, 0, 0))
+    dark = font.render(text, True, (60, 60, 60))
+    w, h = mask.get_size()
+    depth = max(3, size // 8)
+    outline = max(2, size // 22)
+    pad = depth + outline + 10
+    ox = oy = pad
     surf = pygame.Surface((w + pad * 2, h + pad * 2), pygame.SRCALPHA)
-    # soft drop shadow
-    shadow = font.render(text, True, (0, 0, 0))
-    shadow.set_alpha(90)
-    surf.blit(shadow, (pad + depth + 4, pad + depth + 7))
-    # extruded body: dark copies stepping down-right for a 3D block look
+    # stone-textured face = stone texture masked by the glyph alpha
+    face = _stone_texture(w, h)
+    face.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    # 3D extrusion: dark copies stepping down-right
     for d in range(depth, 0, -1):
-        surf.blit(dark, (pad + d, pad + d))
-    # face + top-left bevel highlight
-    surf.blit(face, (pad, pad))
-    hi.set_alpha(130)
-    surf.blit(hi, (pad - 1, pad - 1))
+        surf.blit(dark, (ox + d, oy + d))
+    # thick black outline around the base position
+    for dx in range(-outline, outline + 1):
+        for dy in range(-outline, outline + 1):
+            if dx * dx + dy * dy <= outline * outline:
+                surf.blit(black, (ox + dx, oy + dy))
+    surf.blit(face, (ox, oy))
     return surf
 
 
@@ -259,11 +273,13 @@ class Menu:
             self._logo = make_logo("CRAFTBOOT", int(self.sh * 0.13))
         lr = self._logo.get_rect(center=(self.sw // 2, int(self.sh * 0.24)))
         surface.blit(self._logo, lr)
-        # pulsing, rotated splash near the logo's lower-right
+        # pulsing, rotated splash overlapping the logo's lower-right corner (like the original)
         pulse = 1.0 + 0.08 * math.sin(pygame.time.get_ticks() / 180.0)
         base = render_shadowed(self.fonts.splash, self.splash_text, SPLASH_YELLOW, SPLASH_SHADOW)
         splash = pygame.transform.rotozoom(base, 18, pulse)
-        sr = splash.get_rect(center=(lr.right - int(self.sw * 0.03), lr.bottom - int(self.sh * 0.01)))
+        sx = lr.left + int(lr.width * 0.82)
+        sy = lr.bottom - int(lr.height * 0.12)
+        sr = splash.get_rect(center=(sx, sy))
         surface.blit(splash, sr)
 
     def draw(self, surface):
