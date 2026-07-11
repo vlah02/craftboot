@@ -389,7 +389,7 @@ class Menu:
         bh = max(34, int(self.sh * 0.085))
         gap = int(bh * 0.35)
         total = n * bh + (n - 1) * gap
-        top = int(self.sh * 0.52)
+        top = int(self.sh * 0.45)
         cx = self.sw // 2
         self._rects = [
             pygame.Rect(cx - bw // 2, top + i * (bh + gap), bw, bh) for i in range(n)
@@ -512,14 +512,16 @@ class Menu:
             draw_button(surface, rect, self._button_surf(entry["label"], i == self.index),
                         i == self.index)
         # footer
-        foot = render_shadowed(self.fonts.small, "craftboot 0.1  -  Milestone 1 (visual prototype)")
-        surface.blit(foot, (8, self.sh - foot.get_height() - 6))
+        # top-left: version / build
+        ver = render_shadowed(self.fonts.small, "craftboot 0.1  -  Milestone 1 (visual prototype)")
+        surface.blit(ver, (8, 6))
+        # bottom-left: controls hint
+        hint = render_shadowed(self.fonts.small, "Up/Down + Enter  -  Esc to go back")
+        surface.blit(hint, (8, self.sh - hint.get_height() - 6))
+        # bottom-right: only the auto-boot countdown (disappears once you interact)
         if self.countdown is not None:
-            txt = f"Joining world in {self.countdown} seconds"
-        else:
-            txt = "Up/Down + Enter  -  Esc to go back"
-        hint = render_shadowed(self.fonts.small, txt)
-        surface.blit(hint, (self.sw - hint.get_width() - 8, self.sh - hint.get_height() - 6))
+            cd = render_shadowed(self.fonts.small, f"Joining world in {self.countdown} seconds")
+            surface.blit(cd, (self.sw - cd.get_width() - 8, self.sh - cd.get_height() - 6))
 
 
 class LoadingScreen:
