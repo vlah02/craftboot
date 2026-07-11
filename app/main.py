@@ -267,14 +267,23 @@ def _grain_surface(w, h, base):
 
 
 def make_button_texture(w, h, selected):
-    """Minecraft-style button: grainy grey face + bevel + dark border."""
-    surf = _grain_surface(w, h, 170 if selected else 150)
-    # bevel highlight (top/left) and shadow (bottom/right)
-    pygame.draw.line(surf, (206, 206, 206), (2, 2), (w - 3, 2))
-    pygame.draw.line(surf, (206, 206, 206), (2, 2), (2, h - 3))
-    pygame.draw.line(surf, (74, 74, 74), (2, h - 3), (w - 3, h - 3))
-    pygame.draw.line(surf, (74, 74, 74), (w - 3, 2), (w - 3, h - 3))
-    pygame.draw.rect(surf, (16, 16, 16), surf.get_rect(), width=2)
+    """Minecraft-style button: grainy grey face, thick dark border, chunky
+    pixel bevel (light top-left, dark bottom-right), notched corners."""
+    surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    surf.blit(_grain_surface(w, h, 172 if selected else 150), (0, 0))
+
+    light = (225, 228, 232) if selected else (210, 210, 210)
+    dark = (55, 55, 58)
+    # thick near-black border (3px)
+    pygame.draw.rect(surf, (0, 0, 0), surf.get_rect(), width=3)
+    # chunky 2px inner bevel just inside the border
+    surf.fill(light, (3, 3, w - 6, 2))       # top highlight
+    surf.fill(light, (3, 3, 2, h - 6))       # left highlight
+    surf.fill(dark, (3, h - 5, w - 6, 2))    # bottom shadow
+    surf.fill(dark, (w - 5, 3, 2, h - 6))    # right shadow
+    # notch the 4 corners (transparent) like the Minecraft widget
+    for cx, cy in ((0, 0), (w - 2, 0), (0, h - 2), (w - 2, h - 2)):
+        surf.fill((0, 0, 0, 0), (cx, cy, 2, 2))
     return surf
 
 
