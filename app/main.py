@@ -499,7 +499,7 @@ class Menu:
         # pulsing, rotated splash overlapping the logo, nudged up and toward centre
         pulse = 1.0 + 0.08 * math.sin(pygame.time.get_ticks() / 180.0)
         base = render_outlined(self.fonts.splash, self.splash_text, SPLASH_YELLOW,
-                               (0, 0, 0), thickness=3)
+                               (0, 0, 0), thickness=2)
         splash = pygame.transform.rotozoom(base, 18, pulse)
         # center on the bottom-right of the logo (the bottom of MINECRAFT's "T")
         sx = lr.left + int(lr.width * 0.90)
