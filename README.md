@@ -112,6 +112,17 @@ is only drawn for the procedural logo (or when you provide `app/assets/subtitle.
 explicitly). `SUBTITLE_TEXT` (default "BOOT EDITION") controls the procedural one.
 Use transparent-background PNGs so they sit over the background.
 
+**Buttons** use the real Minecraft button sprite (`app/assets/button.png` /
+`button_highlighted.png`), 9-sliced (fixed caps + stretched middle) so the
+border-to-grain ratio stays correct at any size; the selected entry uses the
+highlighted sprite with yellow text (Minecraft font throughout). Falls back to a
+procedural grainy button if the sprites are missing.
+
+**Auto-boot**: after `TIMEOUT_SECONDS` (15) of no input the default entry boots
+automatically, with a "Joining world in N seconds" countdown (bottom-right) that
+resets on any key/mouse. Default = the highlighted main entry if bootable, else
+the first bootable main entry.
+
 To regenerate the panorama from the 6 cube faces (e.g. to swap in a different
 world), edit/replace `app/assets/panorama_faces/panorama_0..5.png` and run:
 
@@ -130,6 +141,8 @@ python3 scripts/build_panorama.py app/assets/panorama_faces app/assets/panorama3
 - Panorama cube faces from **Nixinova/Original-Panorama** (the original Minecraft
   title panorama as a resource pack), converted to equirectangular by
   `scripts/build_panorama.py`.
+- Minecraft button sprite (`button.png` / `button_highlighted.png`) from the
+  game's default GUI assets (via InventivetalentDev/minecraft-assets); personal use.
 - Minecraft in-game font and background screenshots reused from the minegrub
   theme; Minecraft is a trademark of Mojang/Microsoft — this project is unofficial,
   not affiliated with Mojang, and these assets are bundled for personal use only.

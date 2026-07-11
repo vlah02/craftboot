@@ -27,6 +27,8 @@ FONT_PATH = os.path.join(ASSETS, "minecraft.otf")
 LOGO_FONT_PATH = os.path.join(ASSETS, "fonts", "Minecrafter.Reg.ttf")
 LOGO_IMG_PATH = os.path.join(ASSETS, "logo.png")          # optional pre-made 3D logo (textcraft/easecation)
 LOGO_DIR = os.path.join(ASSETS, "logos")                  # optional dir of logo PNGs; one picked at random
+BUTTON_IMG = os.path.join(ASSETS, "button.png")           # real Minecraft button sprite (200x20)
+BUTTON_HOVER_IMG = os.path.join(ASSETS, "button_highlighted.png")
 SUBTITLE_IMG_PATH = os.path.join(ASSETS, "subtitle.png")  # optional pre-made subtitle image
 SUBTITLE_TEXT = "BOOT EDITION"                            # rendered if no subtitle.png present
 
@@ -54,6 +56,7 @@ PHOTO_BLUR = 5               # background blur radius ("a little bit blurred")
 VIEW_ZOOM = 2.4              # pano mode vertical zoom
 PANO_LOOP_SECONDS = 60.0     # pano mode full-rotation time
 GRAIN_CELL = 3               # button grain block size in px (bigger = chunkier)
+TIMEOUT_SECONDS = 15         # auto-boot the default entry after this many idle seconds
 
 
 def blur_surface(surf, radius):
@@ -284,24 +287,52 @@ def _grain_surface(w, h, base):
     return pygame.transform.scale(small, (w, h))  # nearest-neighbour -> blocky grain
 
 
+_BTN_SPRITE = {}
+
+
+def _button_sprite(selected):
+    if selected not in _BTN_SPRITE:
+        path = BUTTON_HOVER_IMG if selected else BUTTON_IMG
+        img = None
+        if os.path.exists(path):
+            try:
+                img = pygame.image.load(path).convert_alpha()
+            except pygame.error:
+                img = None
+        _BTN_SPRITE[selected] = img
+    return _BTN_SPRITE[selected]
+
+
 def make_button_texture(w, h, selected):
-    """Minecraft-style button: grainy grey face, thick dark border, chunky
-    pixel bevel (light top-left, dark bottom-right), notched corners."""
+    """9-slice the real Minecraft button sprite: full height scaled (keeps the
+    top/bottom bevel + border), left/right caps fixed, middle stretched. Falls
+    back to a procedural grainy button if the sprite is missing."""
+    src = _button_sprite(selected)
+    if src is None:
+        return _procedural_button(w, h, selected)
+    sw, sh = src.get_size()
+    cap = 2                                   # texture-px border/bevel cap
+    cap_w = max(2, round(cap * (h / sh)))     # keep pixels ~square
+    left = pygame.transform.scale(src.subsurface((0, 0, cap, sh)), (cap_w, h))
+    right = pygame.transform.scale(src.subsurface((sw - cap, 0, cap, sh)), (cap_w, h))
+    mid_w = max(1, w - 2 * cap_w)
+    mid = pygame.transform.scale(src.subsurface((cap, 0, sw - 2 * cap, sh)), (mid_w, h))
+    surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    surf.blit(left, (0, 0))
+    surf.blit(mid, (cap_w, 0))
+    surf.blit(right, (w - cap_w, 0))
+    return surf
+
+
+def _procedural_button(w, h, selected):
     surf = pygame.Surface((w, h), pygame.SRCALPHA)
     surf.blit(_grain_surface(w, h, 172 if selected else 150), (0, 0))
-
-    light = (225, 228, 232) if selected else (210, 210, 210)
-    dark = (55, 55, 58)
-    # thick near-black border (3px)
+    light, dark = (210, 210, 210), (55, 55, 58)
     pygame.draw.rect(surf, (0, 0, 0), surf.get_rect(), width=3)
-    # chunky 2px inner bevel just inside the border
-    surf.fill(light, (3, 3, w - 6, 2))       # top highlight
-    surf.fill(light, (3, 3, 2, h - 6))       # left highlight
-    surf.fill(dark, (3, h - 5, w - 6, 2))    # bottom shadow
-    surf.fill(dark, (w - 5, 3, 2, h - 6))    # right shadow
-    # notch the 4 corners (transparent) like the Minecraft widget
-    for cx, cy in ((0, 0), (w - 2, 0), (0, h - 2), (w - 2, h - 2)):
-        surf.fill((0, 0, 0, 0), (cx, cy, 2, 2))
+    surf.fill(light, (3, 3, w - 6, 2))
+    surf.fill(light, (3, 3, 2, h - 6))
+    surf.fill(dark, (3, h - 5, w - 6, 2))
+    surf.fill(dark, (w - 5, 3, 2, h - 6))
     return surf
 
 
@@ -312,8 +343,6 @@ def draw_button(surface, rect, surf_text, selected):
         tex = make_button_texture(rect.width, rect.height, selected)
         _BTN_TEX[key] = tex
     surface.blit(tex, rect.topleft)
-    if selected:
-        pygame.draw.rect(surface, WHITE, rect.inflate(4, 4), width=2)
     surface.blit(surf_text, surf_text.get_rect(center=rect.center))
 
 
@@ -329,6 +358,7 @@ class Menu:
         self._btn_cache = {}
         self._rects = []
         self._bg_name = bg_name
+        self.countdown = None  # seconds remaining until auto-boot (set by main loop)
         self._logo = None
         self._logo_from_image = False
         self._subtitle = False  # False = not built yet; may resolve to a surface or None
@@ -354,7 +384,7 @@ class Menu:
     def _button_surf(self, label, selected):
         key = (label, selected)
         if key not in self._btn_cache:
-            color = WHITE
+            color = (255, 255, 130) if selected else WHITE  # Minecraft-style yellow on hover
             self._btn_cache[key] = render_shadowed(self.fonts.button, label, color)
         return self._btn_cache[key]
 
@@ -468,7 +498,11 @@ class Menu:
         # footer
         foot = render_shadowed(self.fonts.small, "craftboot 0.1  -  Milestone 1 (visual prototype)")
         surface.blit(foot, (8, self.sh - foot.get_height() - 6))
-        hint = render_shadowed(self.fonts.small, "Up/Down + Enter  -  Esc to go back")
+        if self.countdown is not None:
+            txt = f"Joining world in {self.countdown} seconds"
+        else:
+            txt = "Up/Down + Enter  -  Esc to go back"
+        hint = render_shadowed(self.fonts.small, txt)
         surface.blit(hint, (self.sw - hint.get_width() - 8, self.sh - hint.get_height() - 6))
 
 
@@ -537,6 +571,19 @@ def perform_handoff(entry):
         print("            systemctl reboot --firmware-setup")
 
 
+def pick_default_entry(menu):
+    """Entry auto-boot chooses when the idle countdown expires: the highlighted
+    main-menu entry if it's bootable, else the first bootable main entry."""
+    if menu.stack[-1] == "main":
+        cur = menu.entries[menu.index]
+        if cur["type"] in ("windows", "kexec"):
+            return cur
+    for e in menu.config["menus"]["main"]:
+        if e["type"] in ("windows", "kexec"):
+            return e
+    return None
+
+
 def main(argv):
     windowed = "--windowed" in argv
     pygame.init()
@@ -562,6 +609,7 @@ def main(argv):
     state = "menu"
     loading = None
     pending = None
+    remaining = float(TIMEOUT_SECONDS)
     running = True
     while running:
         dt = clock.tick(60) / 1000.0
@@ -569,6 +617,7 @@ def main(argv):
             if event.type == pygame.QUIT:
                 running = False
             elif state == "menu" and event.type == pygame.KEYDOWN:
+                remaining = float(TIMEOUT_SECONDS)  # any key resets the countdown
                 if event.key in (pygame.K_ESCAPE,):
                     if not menu.back():
                         running = False
@@ -585,8 +634,10 @@ def main(argv):
                     elif chosen:
                         perform_handoff(chosen)
             elif state == "menu" and event.type == pygame.MOUSEMOTION:
+                remaining = float(TIMEOUT_SECONDS)
                 menu.point(event.pos)
             elif state == "menu" and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                remaining = float(TIMEOUT_SECONDS)
                 if menu.point(event.pos):
                     chosen = menu.select()
                     if chosen and chosen["type"] in ("windows", "kexec"):
@@ -596,6 +647,18 @@ def main(argv):
                     elif chosen:
                         perform_handoff(chosen)
 
+        if state == "menu":
+            remaining -= dt
+            menu.countdown = max(0, int(math.ceil(remaining)))
+            if remaining <= 0:
+                entry = pick_default_entry(menu)
+                if entry:
+                    print(f"[craftboot] auto-boot: {entry['id']}")
+                    pending = entry
+                    loading = LoadingScreen(screen, fonts, entry["label"])
+                    state = "loading"
+                else:
+                    remaining = float(TIMEOUT_SECONDS)  # nothing bootable; keep waiting
         if state == "menu":
             panorama.update(dt)
             panorama.draw(screen)
