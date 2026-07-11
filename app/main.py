@@ -57,7 +57,8 @@ PHOTO_MARGIN = 1.5           # scale factor over screen size = how far it pans
 PHOTO_BLUR = 5               # background blur radius ("a little bit blurred")
 PANO_FOV = 118               # horizontal FOV (deg); higher = more zoomed-out/skewed
 PANO_BLUR = 0                # box-blur radius (equirect px); 0 = sharp, no blur
-PANO_LOOP_SECONDS = 45.0     # seconds for one full 360 rotation
+PANO_LOOP_SECONDS = 65.0     # seconds for one full 360 rotation (higher = slower)
+PANO_START = 0.0             # fixed starting angle as a fraction of the full turn (0..1)
 PANO_RENDER_SCALE = 0.8      # render the pano at this fraction of screen res, then upscale
 GRAIN_CELL = 3               # button grain block size in px (bigger = chunkier)
 TIMEOUT_SECONDS = 15         # auto-boot the default entry after this many idle seconds
@@ -267,7 +268,7 @@ class Panorama:
         self.lat_idx = np.clip(((0.5 - lat / math.pi) * self.EH).astype(np.int64),
                                0, self.EH - 1)
         self.base_lon = (lon / (2 * math.pi)) * self.EW  # relative longitude (px)
-        self.yaw = random.random() * self.EW             # random starting angle each boot
+        self.yaw = PANO_START * self.EW                  # fixed starting angle
         self.speed = self.EW / PANO_LOOP_SECONDS         # px/sec
         self._surf = pygame.Surface((self.rw, self.rh))
 
