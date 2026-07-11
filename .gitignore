@@ -5,3 +5,5 @@ venv/
 boot/build/
 *.img
 *.iso
+.superpowers/
+build/
