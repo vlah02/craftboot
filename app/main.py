@@ -735,8 +735,18 @@ def pick_default_entry(menu):
     return None
 
 
+def _open_display():
+    """Prefer DRM/KMS (dumb buffer); fall back to the fbdev /dev/fb0 path."""
+    try:
+        from drmkms import KmsDisplay
+        return KmsDisplay()
+    except Exception as e:
+        print(f"[craftboot] KMS unavailable ({e}); falling back to fbdev /dev/fb0")
+        return Framebuffer()
+
+
 def main(argv):
-    fb_mode = "--fb" in argv          # render to /dev/fb0 + evdev input (boot env)
+    fb_mode = "--fb" in argv          # render to the screen (KMS/fbdev) + evdev input
     windowed = "--windowed" in argv
     bg_mode = "photos"
     if "--bg" in argv:
@@ -750,8 +760,10 @@ def main(argv):
         os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
         os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
         pygame.init()
-        fb = Framebuffer()
-        screen = pygame.Surface((fb.xres, fb.yres))
+        fb = _open_display()
+        # A dummy display surface (SDL dummy driver) so .convert()/.convert_alpha()
+        # work when loading PNGs; it stays offscreen and we push it to fb.blit().
+        screen = pygame.display.set_mode((fb.xres, fb.yres))
         kbd = EvdevKeyboard()
     else:
         pygame.init()
