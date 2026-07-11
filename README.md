@@ -16,8 +16,27 @@ loading animation, and a 15-second auto-boot countdown.
 
 ---
 
+## Demo
+
+> Rendered by the app itself — the same code path that runs at boot, captured off-screen.
+
+**Main menu** — navigation and the *Extras* submenu, over a rotating 360° panorama:
+
+![craftboot main menu](docs/demo-menu.webp)
+
+**A random Minecraft version each boot** — the logo auto-matches the world:
+
+![panorama worlds](docs/demo-worlds.webp)
+
+**Loading screen** shown during the handoff to the selected OS:
+
+![loading screen](docs/demo-loading.webp)
+
+---
+
 ## Table of contents
 
+- [Demo](#demo)
 - [Why a program instead of a GRUB theme](#why-a-program-instead-of-a-grub-theme)
 - [How it works](#how-it-works)
 - [Repository layout](#repository-layout)
