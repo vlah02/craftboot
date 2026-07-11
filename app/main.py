@@ -515,7 +515,7 @@ class Menu:
                         i == self.index)
         # footer
         # top-left: version / build
-        ver = render_shadowed(self.fonts.small, "craftboot 0.1  -  Milestone 1 (visual prototype)")
+        ver = render_shadowed(self.fonts.small, "Craftboot 1.0")
         surface.blit(ver, (8, 6))
         # bottom-left: controls hint
         hint = render_shadowed(self.fonts.small, "Up/Down + Enter  -  Esc to go back")
