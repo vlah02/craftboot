@@ -4,6 +4,9 @@
 # Quit: close the window, or Ctrl-A X isn't available here — use the monitor
 # (Ctrl-A C toggles) or just close the QEMU window.
 set -euo pipefail
+# Snap-launched shells leak /snap/.../lib into LD_LIBRARY_PATH, which breaks the
+# system qemu (glibc mismatch). Clear it so qemu uses the system libraries.
+unset LD_LIBRARY_PATH LD_PRELOAD
 HERE="$(cd "$(dirname "$0")" && pwd)"
 B="$HERE/build"
 
