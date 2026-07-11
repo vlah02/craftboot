@@ -106,7 +106,7 @@ class Fonts:
         self.small = self._f(base)
         self.button = self._f(int(base * 1.35))
         self.title = self._f(int(base * 3.2))
-        self.splash = self._f(int(base * 1.2))
+        self.splash = self._f(int(base * 1.5))
         self.load = self._f(int(base * 1.1))
 
     @staticmethod
@@ -114,6 +114,20 @@ class Fonts:
         if os.path.exists(FONT_PATH):
             return pygame.font.Font(FONT_PATH, size)
         return pygame.font.SysFont("monospace", size)
+
+
+def render_outlined(font, text, color, outline=(0, 0, 0), thickness=3):
+    """Text with a solid outline all around (fatter 'border' than a drop shadow)."""
+    base = font.render(text, True, color)
+    ol = font.render(text, True, outline)
+    w, h = base.get_size()
+    surf = pygame.Surface((w + 2 * thickness, h + 2 * thickness), pygame.SRCALPHA)
+    for dx in range(-thickness, thickness + 1):
+        for dy in range(-thickness, thickness + 1):
+            if dx or dy:
+                surf.blit(ol, (thickness + dx, thickness + dy))
+    surf.blit(base, (thickness, thickness))
+    return surf
 
 
 def render_shadowed(font, text, color=WHITE, shadow=SHADOW, off=2):
@@ -482,12 +496,13 @@ class Menu:
         if self._subtitle:
             subr = self._subtitle.get_rect(center=(self.sw // 2, lr.bottom - int(self.sh * 0.01)))
             surface.blit(self._subtitle, subr)
-        # pulsing, rotated splash to the lower-right of the title
+        # pulsing, rotated splash overlapping the logo, nudged up and toward centre
         pulse = 1.0 + 0.08 * math.sin(pygame.time.get_ticks() / 180.0)
-        base = render_shadowed(self.fonts.splash, self.splash_text, SPLASH_YELLOW, SPLASH_SHADOW)
+        base = render_outlined(self.fonts.splash, self.splash_text, SPLASH_YELLOW,
+                               (0, 0, 0), thickness=3)
         splash = pygame.transform.rotozoom(base, 18, pulse)
-        sx = lr.left + int(lr.width * 0.90)
-        sy = lr.centery + int(lr.height * 0.12)
+        sx = lr.left + int(lr.width * 0.80)
+        sy = lr.centery
         surface.blit(splash, splash.get_rect(center=(sx, sy)))
 
     def draw(self, surface):
