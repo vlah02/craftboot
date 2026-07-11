@@ -20,9 +20,9 @@ static void tcpy(char *dst, size_t cap, const char *js, const jsmntok_t *t) {
     size_t n = (size_t)(t->end - t->start); if (n >= cap) n = cap - 1;
     memcpy(dst, js + t->start, n); dst[n] = 0;
 }
-static int skip(const jsmntok_t *t, int i) {          /* index just past token i */
+static int skip(const jsmntok_t *t, int nt, int i) {   /* index just past token i */
     int end = t[i].end, j = i + 1;
-    while (t[j].start != -1 && t[j].start < end) j++;  /* jsmn children are contiguous */
+    while (j < nt && t[j].start < end) j++;             /* jsmn children are contiguous */
     return j;
 }
 static etype_t etype(const char *s) {
@@ -33,7 +33,7 @@ static etype_t etype(const char *s) {
     if (!strcmp(s, "back"))    return E_BACK;
     return E_INFO;
 }
-static void parse_entry(const char *js, const jsmntok_t *t, int obj, entry_t *e) {
+static void parse_entry(const char *js, const jsmntok_t *t, int nt, int obj, entry_t *e) {
     memset(e, 0, sizeof *e);
     int i = obj + 1;
     for (int k = 0; k < t[obj].size; k++) {
@@ -46,7 +46,7 @@ static void parse_entry(const char *js, const jsmntok_t *t, int obj, entry_t *e)
         else if (teq(js, key, "kernel"))  tcpy(e->kernel, sizeof e->kernel, js, val);
         else if (teq(js, key, "initrd"))  tcpy(e->initrd, sizeof e->initrd, js, val);
         else if (teq(js, key, "cmdline")) tcpy(e->cmdline, sizeof e->cmdline, js, val);
-        i = skip(t, i + 1);
+        i = skip(t, nt, i + 1);
     }
 }
 int config_load(config_t *c, const char *path) {
@@ -66,14 +66,14 @@ int config_load(config_t *c, const char *path) {
                 int which = teq(js, &t[mi], "extras") ? 1 : 0;   /* "main" -> 0 */
                 int arr = mi + 1, ei = arr + 1;
                 for (int a = 0; a < t[arr].size && a < 8; a++) {
-                    parse_entry(js, t, ei, &c->menu[which][a]);
+                    parse_entry(js, t, nt, ei, &c->menu[which][a]);
                     c->nmenu[which]++;
-                    ei = skip(t, ei);
+                    ei = skip(t, nt, ei);
                 }
-                mi = skip(t, arr);
+                mi = skip(t, nt, arr);
             }
         }
-        i = skip(t, i + 1);
+        i = skip(t, nt, i + 1);
     }
     free(js);
     return c->nmenu[0] ? 0 : -1;
