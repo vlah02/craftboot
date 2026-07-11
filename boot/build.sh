@@ -1,64 +1,85 @@
 #!/bin/bash
-# Build a craftboot initramfs for QEMU testing (M3, step 1: boot to a shell).
-# The initramfs is built as your normal user. Only staging the (root-only)
-# kernel needs sudo; if it can't be copied, this prints the one command to run.
+# Build the craftboot initramfs (M3): busybox + python3 + pygame + numpy + SDL2
+# + the app, launched in --fb mode (framebuffer output + evdev input).
+# evdev and simpledrm (/dev/fb0) are built into the kernel, so no modules needed.
+# Builds as your normal user; only staging the root-only kernel needs sudo.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+APP="$HERE/../app"
 B="$HERE/build"
 ROOT="$B/root"
 KREL="$(uname -r)"
+PYBIN="$(readlink -f "$(command -v python3)")"
+STDLIB="$(python3 -c 'import sys;print(sys.base_prefix+"/lib/python%d.%d"%sys.version_info[:2])')"
+PYGAME_DIR="$(PYGAME_HIDE_SUPPORT_PROMPT=1 python3 -c 'import pygame,os;print(os.path.dirname(pygame.__file__))' 2>/dev/null || true)"
+NUMPY_DIR="$(python3 -c 'import numpy,os;print(os.path.dirname(numpy.__file__))')"
 
 mkdir -p "$B"
 rm -rf "$ROOT" "$B/craftboot.initrd"     # keep a staged kernel across rebuilds
-mkdir -p "$ROOT"/{bin,sbin,proc,sys,dev,tmp,run,etc,usr/bin,usr/sbin,lib,lib64,usr/lib}
+mkdir -p "$ROOT"/{bin,sbin,proc,sys,dev,tmp,run,etc,usr/bin,usr/sbin,lib,lib64,usr/lib,craftboot}
 
-copy_with_libs() {
-    local bin="$1"
-    [[ -e "$bin" ]] || { echo "   (missing: $bin)"; return; }
-    cp -L --parents "$bin" "$ROOT" 2>/dev/null || true
-    ldd "$bin" 2>/dev/null | grep -oE '/[^ ]+\.so[^ ]*' | while read -r lib; do
+libs_of() {
+    ldd "$1" 2>/dev/null | grep -oE '/[^ ]+\.so[^ ]*' | while read -r lib; do
         [[ -f "$lib" ]] && cp -L --parents "$lib" "$ROOT" 2>/dev/null || true
     done || true
 }
+copy_bin() { [[ -e "$1" ]] && cp -L --parents "$1" "$ROOT" 2>/dev/null || true; libs_of "$1"; }
+copy_tree() {   # copy a dir verbatim, then resolve libs of every .so inside it
+    cp -a --parents "$1" "$ROOT" 2>/dev/null || true
+    find "$1" -name '*.so*' -print0 2>/dev/null | while IFS= read -r -d '' so; do libs_of "$so"; done || true
+}
 
-echo "==> busybox + core applets"
-copy_with_libs /usr/bin/busybox
-for a in busybox sh mount umount ls cat echo mkdir sleep insmod modprobe mknod \
-         switch_root poweroff reboot dmesg uname ln cp; do
+echo "==> busybox"
+copy_bin /usr/bin/busybox
+for a in busybox sh mount umount ls cat echo mkdir sleep switch_root poweroff \
+         reboot dmesg uname ln cp env; do
     ln -sf /usr/bin/busybox "$ROOT/bin/$a"
 done
+
+echo "==> python + stdlib ($PYBIN)"
+copy_bin "$PYBIN"
+ln -sf "$PYBIN" "$ROOT/bin/python3"
+copy_tree "$STDLIB"
+
+echo "==> pygame + numpy"
+[[ -n "$PYGAME_DIR" ]] && copy_tree "$PYGAME_DIR"
+copy_tree "$NUMPY_DIR"
+
+echo "==> SDL2"
+sdl="$(ldconfig -p | awk '$1=="libSDL2-2.0.so.0"{print $NF; exit}')"
+[[ -n "$sdl" ]] && { cp -L --parents "$sdl" "$ROOT" 2>/dev/null || true; libs_of "$sdl"; }
+
+echo "==> app"
+cp -a "$APP/." "$ROOT/craftboot/"
+find "$ROOT/craftboot" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 
 echo "==> /init"
 cat > "$ROOT/init" <<'EOF'
 #!/bin/sh
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export PYTHONPATH=/usr/lib/python3/dist-packages
+export PYTHONDONTWRITEBYTECODE=1 HOME=/root
+mkdir -p /root
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
-echo
-echo "=================================================="
-echo "  craftboot initramfs — hello from the VM!"
-echo "  kernel: $(uname -r)"
-echo "  (type 'poweroff -f' or Ctrl-A X to quit qemu)"
-echo "=================================================="
-echo
+echo "[craftboot] starting menu (fb mode)..."
+python3 /craftboot/main.py --fb
+echo "[craftboot] app exited ($?); dropping to shell."
 exec sh
 EOF
 chmod +x "$ROOT/init"
 
 echo "==> pack initramfs"
-( cd "$ROOT" && find . | cpio -o -H newc 2>/dev/null | gzip -9 ) > "$B/craftboot.initrd"
+( cd "$ROOT" && find . | cpio -o -H newc 2>/dev/null | gzip -1 ) > "$B/craftboot.initrd"
 echo "    $B/craftboot.initrd ($(du -h "$B/craftboot.initrd" | cut -f1))"
 
 echo "==> stage kernel"
 if [[ -f "$B/vmlinuz" ]]; then
     echo "    kernel already staged: $B/vmlinuz"
 elif cp "/boot/vmlinuz-$KREL" "$B/vmlinuz" 2>/dev/null; then
-    chmod +r "$B/vmlinuz"
-    echo "    $B/vmlinuz"
+    chmod +r "$B/vmlinuz"; echo "    $B/vmlinuz"
 else
-    echo "    [!] Could not read /boot/vmlinuz-$KREL (root-only). Run once:"
-    echo "        sudo cp /boot/vmlinuz-$KREL '$B/vmlinuz' && sudo chmod +r '$B/vmlinuz'"
+    echo "    [!] Run once: sudo cp /boot/vmlinuz-$KREL '$B/vmlinuz' && sudo chmod +r '$B/vmlinuz'"
 fi
-
 echo "DONE. Now: ./boot/run-qemu.sh"

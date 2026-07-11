@@ -585,7 +585,6 @@ class Framebuffer:
 
     def __init__(self, dev="/dev/fb0"):
         import fcntl
-        import mmap
         import struct
         self.fd = os.open(dev, os.O_RDWR)
         v = fcntl.ioctl(self.fd, 0x4600, bytes(160))   # FBIOGET_VSCREENINFO
@@ -593,10 +592,17 @@ class Framebuffer:
         self.bpp = struct.unpack_from("I", v, 24)[0]
         f = fcntl.ioctl(self.fd, 0x4602, bytes(80))     # FBIOGET_FSCREENINFO
         self.stride = struct.unpack_from("I", f, 48)[0]
-        self.mm = mmap.mmap(self.fd, self.stride * self.yres)
         print(f"[craftboot] framebuffer {self.xres}x{self.yres} {self.bpp}bpp stride={self.stride}")
+        if os.environ.get("CRAFTBOOT_FBTEST"):   # diagnostic: solid red fill
+            import numpy as np
+            t = np.zeros((self.yres, self.stride), np.uint8)
+            t[:, 2::4] = 255
+            os.pwrite(self.fd, t.tobytes(), 0)
+            print("[craftboot] fb test-fill (red) written")
 
     def blit(self, surface):
+        # Write via pwrite (not mmap): the fbdev write path triggers the DRM
+        # damage/flush, so simpledrm actually pushes pixels to the scanout.
         import numpy as np
         rgb = np.transpose(pygame.surfarray.array3d(surface), (1, 0, 2))  # (h,w,3)
         h, w = rgb.shape[:2]
@@ -610,12 +616,10 @@ class Framebuffer:
         flat = px.reshape(h, w * bypp)
         rh, cw = min(h, self.yres), min(w * bypp, self.stride)
         frame[:rh, :cw] = flat[:rh, :cw]
-        self.mm.seek(0)
-        self.mm.write(frame.tobytes())
+        os.pwrite(self.fd, frame.tobytes(), 0)
 
     def close(self):
         try:
-            self.mm.close()
             os.close(self.fd)
         except Exception:
             pass
