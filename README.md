@@ -48,9 +48,12 @@ _Decision pending — does not block Milestones 1-2._
 
 - [x] **M1 — Visual prototype** (`app/main.py`): panorama, splash, menu, loading
   animation. Runs windowed on the desktop. Boots nothing (safe).
-- [ ] **M2 — Real handoff (tested from the running desktop)**: wire
-  `scripts/handoff-ubuntu.sh` (kexec) and `scripts/handoff-windows.sh` (BootNext
-  + reboot). Test each — both are recoverable (worst case: a normal reboot).
+- [~] **M2 — Real handoff (tested from the running desktop)**: wired into the app.
+  Ubuntu = `kexec -s` (seamless, no reboot; confirmed working under Secure Boot).
+  Windows = `efibootmgr --bootnext` + reboot (a reboot is unavoidable — firmware
+  must start Windows). UEFI = `systemctl reboot --firmware-setup`. Dry-run by
+  default; `--live` actually boots (uses sudo on the desktop, runs as root in the
+  boot env). Worst case is a normal reboot.
 - [ ] **M3 — Minimal Linux image**: build a small, fast-booting rootfs
   (Alpine/buildroot) that autostarts the app on the framebuffer/KMS-DRM. Test in
   **QEMU + OVMF** only. (Needs `qemu-system-x86_64`.)

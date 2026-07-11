@@ -17,6 +17,8 @@ import json
 import math
 import os
 import random
+import re
+import subprocess
 import sys
 
 import pygame
@@ -577,16 +579,58 @@ class LoadingScreen:
         pygame.draw.rect(surface, LOAD_BAR_FILL, (bx, by, int(bw * self.progress), bh))
 
 
-def perform_handoff(entry):
-    """Milestone 1 stub. Later this calls scripts/handoff-*.sh."""
-    print(f"[craftboot] would boot: {entry['id']} (type={entry['type']})")
-    if entry["type"] == "kexec":
-        print(f"            kexec kernel={entry.get('kernel')} initrd={entry.get('initrd')}")
-        print(f"            cmdline={entry.get('cmdline')}")
-    elif entry["type"] == "windows":
-        print("            efibootmgr --bootnext <windows> ; reboot")
-    elif entry["type"] == "uefi":
-        print("            systemctl reboot --firmware-setup")
+def _find_windows_bootnum():
+    """Look up the 'Windows Boot Manager' entry number from efibootmgr."""
+    try:
+        out = subprocess.run(["efibootmgr"], capture_output=True, text=True).stdout
+    except FileNotFoundError:
+        return None
+    for line in out.splitlines():
+        if "windows boot manager" in line.lower():
+            m = re.match(r"Boot([0-9A-Fa-f]{4})", line)
+            if m:
+                return m.group(1)
+    return None
+
+
+def _handoff_commands(entry):
+    """Return the list of commands that boot `entry`, or None if unsupported."""
+    t = entry["type"]
+    if t == "kexec":
+        # -s = kexec_file_load: accepts the Canonical-signed kernel under Secure Boot
+        return [
+            ["kexec", "-s", "-l", entry["kernel"],
+             f"--initrd={entry['initrd']}", f"--command-line={entry['cmdline']}"],
+            ["systemctl", "kexec"],
+        ]
+    if t == "windows":
+        num = _find_windows_bootnum()
+        if not num:
+            return None
+        return [["efibootmgr", "-n", num], ["systemctl", "reboot"]]
+    if t == "uefi":
+        return [["systemctl", "reboot", "--firmware-setup"]]
+    return None  # info / not yet implemented (e.g. memtest)
+
+
+def perform_handoff(entry, live=False):
+    """Boot the chosen entry. Dry-run by default (prints commands); with live=True
+    and root, actually executes the handoff (kexec / efibootmgr+reboot)."""
+    cmds = _handoff_commands(entry)
+    print(f"[craftboot] handoff: {entry['id']} (type={entry['type']})")
+    if cmds is None:
+        print(f"[craftboot] no handoff implemented for '{entry['id']}' yet")
+        return
+    for c in cmds:
+        print("           ", " ".join(c))
+    if not live:
+        print("[craftboot] (dry-run; pass --live to actually boot)")
+        return
+    # In the boot environment the app runs as root; on the desktop, use sudo
+    # (run `sudo -v` first to cache credentials so it doesn't block).
+    runner = [] if os.geteuid() == 0 else ["sudo"]
+    for c in cmds:
+        subprocess.run(runner + c, check=True)
 
 
 def pick_default_entry(menu):
@@ -617,6 +661,7 @@ def main(argv):
         i = argv.index("--bg")
         if i + 1 < len(argv):
             bg_mode = argv[i + 1]
+    live = "--live" in argv  # actually boot on selection (needs root); else dry-run
 
     fonts = Fonts(screen.get_size()[1])
     config = load_config()
@@ -651,7 +696,7 @@ def main(argv):
                         loading = LoadingScreen(screen, fonts, chosen["label"])
                         state = "loading"
                     elif chosen:
-                        perform_handoff(chosen)
+                        perform_handoff(chosen, live)
             elif state == "menu" and event.type == pygame.MOUSEMOTION:
                 menu.point(event.pos)
             elif state == "menu" and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -663,7 +708,7 @@ def main(argv):
                         loading = LoadingScreen(screen, fonts, chosen["label"])
                         state = "loading"
                     elif chosen:
-                        perform_handoff(chosen)
+                        perform_handoff(chosen, live)
 
         if state == "menu":
             if autoboot:
@@ -688,8 +733,8 @@ def main(argv):
             done = loading.update(dt)
             loading.draw(screen)
             if done:
-                perform_handoff(pending)
-                running = False  # Milestone 1: exit after the animation
+                perform_handoff(pending, live)
+                running = False
 
         pygame.display.flip()
 
