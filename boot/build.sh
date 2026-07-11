@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 APP="$HERE/../app"
 B="$HERE/build"
 ROOT="$B/root"
-KREL="$(uname -r)"
+KREL="${1:-$(uname -r)}"              # target kernel version (arg 1); default = running
 ROOT_UUID="$(findmnt -no UUID /)"     # baked into init so it can mount the real root
 PYBIN="$(readlink -f "$(command -v python3)")"
 STDLIB="$(python3 -c 'import sys;print(sys.base_prefix+"/lib/python%d.%d"%sys.version_info[:2])')"
@@ -61,7 +61,7 @@ for f in modules.dep modules.dep.bin modules.alias modules.alias.bin modules.sym
     [[ -f "$MODDIR/$f" ]] && cp "$MODDIR/$f" "$ROOT$MODDIR/" 2>/dev/null || true
 done
 for m in usbhid hid_generic hid_asus i2c_hid_acpi nvme; do
-    modprobe --show-depends "$m" 2>/dev/null | awk '/^insmod/{print $2}' | while read -r ko; do
+    modprobe -S "$KREL" --show-depends "$m" 2>/dev/null | awk '/^insmod/{print $2}' | while read -r ko; do
         [[ -f "$ko" ]] && cp -L --parents "$ko" "$ROOT" 2>/dev/null || true
     done || true
 done
