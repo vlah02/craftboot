@@ -93,3 +93,14 @@ python3 app/main.py --windowed
 Controls: **Up/Down** (or mouse) to move, **Enter/click** to select, **Esc** to go
 back / quit. Selecting Windows/Ubuntu plays the loading animation, prints the
 intended boot action to the terminal, and exits — it does not boot anything yet.
+
+A random background is chosen from `app/assets/backgrounds/` each launch. Pan
+speed is tunable via `PAN_SPEED_X` / `PAN_SPEED_Y` at the top of `main.py`.
+
+## Credits / licenses
+
+- **Minecrafter** logo font by **MadPixel / PurePixel** — Creative Commons,
+  non-commercial use, shipped with its license (`app/assets/fonts/Minecrafter-License.txt`).
+- Minecraft in-game font and background screenshots reused from the minegrub
+  theme; Minecraft is a trademark of Mojang/Microsoft — this project is unofficial
+  and not affiliated with Mojang.

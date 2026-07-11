@@ -24,6 +24,11 @@ import pygame
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(HERE, "assets")
 FONT_PATH = os.path.join(ASSETS, "minecraft.otf")
+LOGO_FONT_PATH = os.path.join(ASSETS, "fonts", "Minecrafter.Reg.ttf")
+
+# Eased drift speeds (radians/sec) for the panning panorama. Higher = faster pan.
+PAN_SPEED_X = 0.30
+PAN_SPEED_Y = 0.18
 
 # ---- Minecraft-ish palette -------------------------------------------------
 WHITE = (255, 255, 255)
@@ -81,38 +86,81 @@ def render_shadowed(font, text, color=WHITE, shadow=SHADOW, off=2):
     return surf
 
 
+def make_logo(text, size):
+    """Render a Minecraft-title-style 3D wordmark using the Minecrafter font."""
+    if os.path.exists(LOGO_FONT_PATH):
+        font = pygame.font.Font(LOGO_FONT_PATH, size)
+    elif os.path.exists(FONT_PATH):
+        font = pygame.font.Font(FONT_PATH, size)
+    else:
+        font = pygame.font.SysFont("monospace", size)
+    face = font.render(text, True, (200, 200, 200))
+    dark = font.render(text, True, (45, 45, 45))
+    hi = font.render(text, True, (240, 240, 240))
+    w, h = face.get_size()
+    depth = max(2, size // 10)
+    pad = depth + 10
+    surf = pygame.Surface((w + pad * 2, h + pad * 2), pygame.SRCALPHA)
+    # soft drop shadow
+    shadow = font.render(text, True, (0, 0, 0))
+    shadow.set_alpha(90)
+    surf.blit(shadow, (pad + depth + 4, pad + depth + 7))
+    # extruded body: dark copies stepping down-right for a 3D block look
+    for d in range(depth, 0, -1):
+        surf.blit(dark, (pad + d, pad + d))
+    # face + top-left bevel highlight
+    surf.blit(face, (pad, pad))
+    hi.set_alpha(130)
+    surf.blit(hi, (pad - 1, pad - 1))
+    return surf
+
+
 class Panorama:
-    """A gently ping-ponging background, mimicking Minecraft's panning menu."""
+    """A random Minecraft screenshot, gently drifting in 2D (no seams)."""
 
     def __init__(self, screen_size):
         self.sw, self.sh = screen_size
-        img = None
-        path = os.path.join(ASSETS, "panorama.png")
-        if os.path.exists(path):
-            try:
-                img = pygame.image.load(path).convert()
-            except pygame.error:
-                img = None
-        if img is None:
-            img = pygame.Surface((self.sw, self.sh))
-            img.fill((90, 120, 160))
-        # Scale so the image is ~18% wider than the screen; we drift within the slack.
-        target_h = self.sh
-        scale = target_h / img.get_height()
+        img = self._pick_image()
+        # Cover the screen, then add ~35% slack in both axes to drift within.
+        margin = 1.35
+        cover = max(self.sw / img.get_width(), self.sh / img.get_height())
+        scale = cover * margin
         self.img = pygame.transform.smoothscale(
-            img, (int(img.get_width() * scale * 1.18), target_h)
+            img, (int(img.get_width() * scale), int(img.get_height() * scale))
         )
-        self.slack = max(1, self.img.get_width() - self.sw)
+        self.slack_x = max(1, self.img.get_width() - self.sw)
+        self.slack_y = max(1, self.img.get_height() - self.sh)
         self.t = 0.0
 
+    def _pick_image(self):
+        candidates = []
+        bgdir = os.path.join(ASSETS, "backgrounds")
+        if os.path.isdir(bgdir):
+            candidates = [
+                os.path.join(bgdir, f) for f in os.listdir(bgdir)
+                if f.lower().endswith((".png", ".jpg", ".jpeg"))
+            ]
+        random.shuffle(candidates)
+        candidates.append(os.path.join(ASSETS, "panorama.png"))  # fallback
+        for path in candidates:
+            if os.path.exists(path):
+                try:
+                    print(f"[craftboot] background: {os.path.basename(path)}")
+                    return pygame.image.load(path).convert()
+                except pygame.error:
+                    continue
+        surf = pygame.Surface((self.sw, self.sh))
+        surf.fill((90, 120, 160))
+        return surf
+
     def update(self, dt):
-        self.t += dt * 0.06  # slow drift speed
+        self.t += dt
 
     def draw(self, surface):
-        # ping-pong 0..1 using a cosine so it eases at the edges
-        f = (1 - math.cos(self.t)) / 2
-        x = -int(f * self.slack)
-        surface.blit(self.img, (x, 0))
+        # eased 2D ping-pong; the image is larger than the screen so no seams show
+        fx = (1 - math.cos(self.t * PAN_SPEED_X)) / 2
+        fy = (1 - math.cos(self.t * PAN_SPEED_Y)) / 2
+        surface.blit(self.img, (-int(fx * self.slack_x), -int(fy * self.slack_y)))
 
 
 def draw_button(surface, rect, surf_text, selected):
@@ -142,6 +190,7 @@ class Menu:
         self.splash_text = random.choice(load_splashes())
         self._btn_cache = {}
         self._rects = []
+        self._logo = None
         self._layout()
 
     # ---- layout -----------------------------------------------------------
@@ -206,14 +255,15 @@ class Menu:
 
     # ---- draw -------------------------------------------------------------
     def draw_title(self, surface):
-        title = render_shadowed(self.fonts.title, "craftboot", WHITE, SHADOW, 4)
-        tr = title.get_rect(center=(self.sw // 2, int(self.sh * 0.22)))
-        surface.blit(title, tr)
-        # pulsing, rotated splash near the title's lower-right
+        if self._logo is None:
+            self._logo = make_logo("CRAFTBOOT", int(self.sh * 0.13))
+        lr = self._logo.get_rect(center=(self.sw // 2, int(self.sh * 0.24)))
+        surface.blit(self._logo, lr)
+        # pulsing, rotated splash near the logo's lower-right
         pulse = 1.0 + 0.08 * math.sin(pygame.time.get_ticks() / 180.0)
         base = render_shadowed(self.fonts.splash, self.splash_text, SPLASH_YELLOW, SPLASH_SHADOW)
         splash = pygame.transform.rotozoom(base, 18, pulse)
-        sr = splash.get_rect(center=(tr.right - int(self.sw * 0.02), tr.bottom + int(self.sh * 0.02)))
+        sr = splash.get_rect(center=(lr.right - int(self.sw * 0.03), lr.bottom - int(self.sh * 0.01)))
         surface.blit(splash, sr)
 
     def draw(self, surface):
