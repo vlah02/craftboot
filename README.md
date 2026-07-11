@@ -383,7 +383,8 @@ This is a **fan project** built on Mojang's Minecraft assets.
 - **Button sprites** (`button.png` / `button_highlighted.png`), the in-game font
   (`minecraft.otf`), and `dirt.png` are Mojang's default GUI assets, bundled for
   personal use.
-- **Logos** (`app/assets/logos/`) are per-update Minecraft wordmarks.
+- **Logos** (`app/assets/logos/`) are per-update Minecraft wordmarks, created with
+  the **EaseCation 3D Text generator** ([3dtext.easecation.net](https://3dtext.easecation.net/)).
 
 ## License & trademark
 
