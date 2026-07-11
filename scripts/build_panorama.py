@@ -56,9 +56,18 @@ def main():
     face_id[pz] = 0; sc[pz] =  x[pz]; tc[pz] = -y[pz]; ma[pz] = az[pz]
     face_id[nz] = 2; sc[nz] = -x[nz]; tc[nz] = -y[nz]; ma[nz] = az[nz]
 
-    fu = np.clip((((sc / ma) + 1) / 2 * S).astype(np.int64), 0, S - 1)
-    fv = np.clip((((tc / ma) + 1) / 2 * S).astype(np.int64), 0, S - 1)
-    result = facearr[face_id, fv, fu]  # (H, W, 3)
+    # bilinear sample within each face (smooths face content vs nearest)
+    fu = np.clip(((sc / ma) + 1) / 2 * (S - 1), 0, S - 1)
+    fv = np.clip(((tc / ma) + 1) / 2 * (S - 1), 0, S - 1)
+    u0 = np.floor(fu).astype(np.int64); u1 = np.minimum(u0 + 1, S - 1)
+    v0 = np.floor(fv).astype(np.int64); v1 = np.minimum(v0 + 1, S - 1)
+    wu = (fu - u0)[..., None]; wv = (fv - v0)[..., None]
+    fa = facearr.astype(np.float32)
+    p00 = fa[face_id, v0, u0]; p01 = fa[face_id, v0, u1]
+    p10 = fa[face_id, v1, u0]; p11 = fa[face_id, v1, u1]
+    top = p00 + (p01 - p00) * wu
+    bot = p10 + (p11 - p10) * wu
+    result = np.clip(top + (bot - top) * wv, 0, 255)  # (H, W, 3)
 
     Image.fromarray(result.astype(np.uint8)).save(out)
     print(f"wrote {out} ({W}x{H}) from {S}x{S} faces")

@@ -56,9 +56,9 @@ PHOTO_PAN_SECONDS = 26.0     # seconds for one left->right sweep (photos mode); 
 PHOTO_MARGIN = 1.5           # scale factor over screen size = how far it pans
 PHOTO_BLUR = 5               # background blur radius ("a little bit blurred")
 PANO_FOV = 100               # horizontal FOV (deg) for the 360 panorama; higher = more skew
-PANO_BLUR = 6                # blur applied to the panorama (bigger = softer)
+PANO_BLUR = 8                # box-blur radius (equirect px) applied to the panorama
 PANO_LOOP_SECONDS = 45.0     # seconds for one full 360 rotation
-PANO_RENDER_SCALE = 0.5      # render the pano at this fraction of screen res, then upscale
+PANO_RENDER_SCALE = 0.6      # render the pano at this fraction of screen res, then upscale
 GRAIN_CELL = 3               # button grain block size in px (bigger = chunkier)
 TIMEOUT_SECONDS = 15         # auto-boot the default entry after this many idle seconds
 
@@ -74,6 +74,25 @@ def blur_surface(surf, radius):
         f = max(2, int(radius))          # bigger radius -> more blur (downscale/upscale)
         small = pygame.transform.smoothscale(surf, (max(1, w // f), max(1, h // f)))
         return pygame.transform.smoothscale(small, (w, h))
+
+
+def _box_blur_np(arr, r):
+    """Resolution-preserving separable box blur; wraps horizontally (panorama seam)."""
+    import numpy as np
+    if r < 1:
+        return arr
+    a = arr.astype(np.float32)
+    k = 2 * r + 1
+    h, w = a.shape[:2]
+    pad = np.concatenate([a[:, w - r:], a, a[:, :r]], axis=1)        # horizontal, wrap
+    cs = np.cumsum(pad, axis=1)
+    cs = np.concatenate([np.zeros((h, 1, 3), np.float32), cs], axis=1)
+    a = (cs[:, k:] - cs[:, :-k]) / k
+    pad = np.concatenate([np.repeat(a[:1], r, 0), a, np.repeat(a[-1:], r, 0)], axis=0)  # vertical, clamp
+    cs = np.cumsum(pad, axis=0)
+    cs = np.concatenate([np.zeros((1, w, 3), np.float32), cs], axis=0)
+    a = (cs[k:] - cs[:-k]) / k
+    return a.astype(np.uint8)
 
 # ---- Minecraft-ish palette -------------------------------------------------
 WHITE = (255, 255, 255)
@@ -214,10 +233,10 @@ class Panorama:
     # -- 360 panorama: perspective projection of a rotating cubemap ----------
     def _init_pano(self, strip):
         import numpy as np
+        eq = np.transpose(pygame.surfarray.array3d(strip), (1, 0, 2))   # (H,W,3)
         if PANO_BLUR > 0:
-            strip = blur_surface(strip, PANO_BLUR)
-        self.eq = np.ascontiguousarray(
-            np.transpose(pygame.surfarray.array3d(strip), (1, 0, 2)))   # (H,W,3)
+            eq = _box_blur_np(eq, PANO_BLUR)                            # smooths seams + pixels
+        self.eq = np.ascontiguousarray(eq)                             # uint8 (H,W,3)
         self.EH, self.EW = self.eq.shape[:2]
         # render at reduced res (it's blurred anyway) then upscale -> fast enough
         self.rw = max(320, int(self.sw * PANO_RENDER_SCALE))
@@ -247,6 +266,7 @@ class Panorama:
         frame = self.eq[row, col]                             # (rh,rw,3)
         pygame.surfarray.blit_array(
             self._surf, np.ascontiguousarray(np.transpose(frame, (1, 0, 2))))
+        # smoothscale upscale also softens the nearest-sampled steps
         surface.blit(pygame.transform.smoothscale(self._surf, (self.sw, self.sh)), (0, 0))
 
     # -- fallback: drifting screenshot --------------------------------------
