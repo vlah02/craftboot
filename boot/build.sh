@@ -8,7 +8,8 @@ B="$HERE/build"
 ROOT="$B/root"
 KREL="$(uname -r)"
 
-rm -rf "$B"
+mkdir -p "$B"
+rm -rf "$ROOT" "$B/craftboot.initrd"     # keep a staged kernel across rebuilds
 mkdir -p "$ROOT"/{bin,sbin,proc,sys,dev,tmp,run,etc,usr/bin,usr/sbin,lib,lib64,usr/lib}
 
 copy_with_libs() {
@@ -22,8 +23,7 @@ copy_with_libs() {
 
 echo "==> busybox + core applets"
 copy_with_libs /usr/bin/busybox
-ln -sf /usr/bin/busybox "$ROOT/bin/sh"
-for a in mount umount ls cat echo mkdir sleep insmod modprobe mknod \
+for a in busybox sh mount umount ls cat echo mkdir sleep insmod modprobe mknod \
          switch_root poweroff reboot dmesg uname ln cp; do
     ln -sf /usr/bin/busybox "$ROOT/bin/$a"
 done
@@ -32,17 +32,17 @@ echo "==> /init"
 cat > "$ROOT/init" <<'EOF'
 #!/bin/sh
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-/bin/busybox mount -t proc proc /proc
-/bin/busybox mount -t sysfs sysfs /sys
-/bin/busybox mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
 echo
 echo "=================================================="
 echo "  craftboot initramfs — hello from the VM!"
-echo "  kernel: $(/bin/busybox uname -r)"
+echo "  kernel: $(uname -r)"
 echo "  (type 'poweroff -f' or Ctrl-A X to quit qemu)"
 echo "=================================================="
 echo
-exec /bin/busybox sh
+exec sh
 EOF
 chmod +x "$ROOT/init"
 
@@ -51,7 +51,9 @@ echo "==> pack initramfs"
 echo "    $B/craftboot.initrd ($(du -h "$B/craftboot.initrd" | cut -f1))"
 
 echo "==> stage kernel"
-if cp "/boot/vmlinuz-$KREL" "$B/vmlinuz" 2>/dev/null; then
+if [[ -f "$B/vmlinuz" ]]; then
+    echo "    kernel already staged: $B/vmlinuz"
+elif cp "/boot/vmlinuz-$KREL" "$B/vmlinuz" 2>/dev/null; then
     chmod +r "$B/vmlinuz"
     echo "    $B/vmlinuz"
 else
