@@ -501,8 +501,9 @@ class Menu:
         base = render_outlined(self.fonts.splash, self.splash_text, SPLASH_YELLOW,
                                (0, 0, 0), thickness=3)
         splash = pygame.transform.rotozoom(base, 18, pulse)
-        sx = lr.left + int(lr.width * 0.80)
-        sy = lr.centery
+        # center on the bottom-right of the logo (the bottom of MINECRAFT's "T")
+        sx = lr.left + int(lr.width * 0.90)
+        sy = lr.top + int(lr.height * 0.52)
         surface.blit(splash, splash.get_rect(center=(sx, sy)))
 
     def draw(self, surface):
@@ -625,6 +626,7 @@ def main(argv):
     loading = None
     pending = None
     remaining = float(TIMEOUT_SECONDS)
+    autoboot = True
     running = True
     while running:
         dt = clock.tick(60) / 1000.0
@@ -632,7 +634,7 @@ def main(argv):
             if event.type == pygame.QUIT:
                 running = False
             elif state == "menu" and event.type == pygame.KEYDOWN:
-                remaining = float(TIMEOUT_SECONDS)  # any key resets the countdown
+                autoboot = False  # any key cancels auto-boot entirely (like GRUB)
                 if event.key in (pygame.K_ESCAPE,):
                     if not menu.back():
                         running = False
@@ -649,10 +651,9 @@ def main(argv):
                     elif chosen:
                         perform_handoff(chosen)
             elif state == "menu" and event.type == pygame.MOUSEMOTION:
-                remaining = float(TIMEOUT_SECONDS)
                 menu.point(event.pos)
             elif state == "menu" and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                remaining = float(TIMEOUT_SECONDS)
+                autoboot = False  # clicking cancels auto-boot too
                 if menu.point(event.pos):
                     chosen = menu.select()
                     if chosen and chosen["type"] in ("windows", "kexec"):
@@ -663,17 +664,20 @@ def main(argv):
                         perform_handoff(chosen)
 
         if state == "menu":
-            remaining -= dt
-            menu.countdown = max(0, int(math.ceil(remaining)))
-            if remaining <= 0:
-                entry = pick_default_entry(menu)
-                if entry:
-                    print(f"[craftboot] auto-boot: {entry['id']}")
-                    pending = entry
-                    loading = LoadingScreen(screen, fonts, entry["label"])
-                    state = "loading"
-                else:
-                    remaining = float(TIMEOUT_SECONDS)  # nothing bootable; keep waiting
+            if autoboot:
+                remaining -= dt
+                menu.countdown = max(0, int(math.ceil(remaining)))
+                if remaining <= 0:
+                    entry = pick_default_entry(menu)
+                    if entry:
+                        print(f"[craftboot] auto-boot: {entry['id']}")
+                        pending = entry
+                        loading = LoadingScreen(screen, fonts, entry["label"])
+                        state = "loading"
+                    else:
+                        autoboot = False
+            else:
+                menu.countdown = None
         if state == "menu":
             panorama.update(dt)
             panorama.draw(screen)
