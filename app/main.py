@@ -230,6 +230,7 @@ class Panorama:
         cands = []
         if os.path.isdir(pdir):
             cands = [os.path.join(pdir, f) for f in os.listdir(pdir) if f.lower().endswith(".png")]
+        print(f"[craftboot] {len(cands)} panorama worlds available")
         random.shuffle(cands)
         cands.append(os.path.join(ASSETS, "panorama360.png"))    # fallback
         for p in cands:
@@ -266,16 +267,14 @@ class Panorama:
         self.lat_idx = np.clip(((0.5 - lat / math.pi) * self.EH).astype(np.int64),
                                0, self.EH - 1)
         self.base_lon = (lon / (2 * math.pi)) * self.EW  # relative longitude (px)
-        self.yaw = 0.0
+        self.yaw = random.random() * self.EW             # random starting angle each boot
         self.speed = self.EW / PANO_LOOP_SECONDS         # px/sec
         self._surf = pygame.Surface((self.rw, self.rh))
 
     def _draw_pano(self, surface):
         import numpy as np
-        bob = int(math.sin(self.t * 0.2) * self.EH * 0.015)   # subtle vertical wobble
         col = ((self.base_lon + self.yaw) % self.EW).astype(np.int64)
-        row = np.clip(self.lat_idx + bob, 0, self.EH - 1)
-        frame = self.eq[row, col]                             # (rh,rw,3)
+        frame = self.eq[self.lat_idx, col]                    # (rh,rw,3)
         pygame.surfarray.blit_array(
             self._surf, np.ascontiguousarray(np.transpose(frame, (1, 0, 2))))
         # smoothscale upscale also softens the nearest-sampled steps
@@ -811,6 +810,7 @@ def _open_display():
 
 
 def main(argv):
+    random.seed(os.urandom(16))       # robust per-boot randomness (early-boot entropy)
     fb_mode = "--fb" in argv          # render to the screen (KMS/fbdev) + evdev input
     windowed = "--windowed" in argv
     bg_mode = "pano"        # default: the rotating 360 perspective panorama
