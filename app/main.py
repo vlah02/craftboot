@@ -579,6 +579,91 @@ class LoadingScreen:
         pygame.draw.rect(surface, LOAD_BAR_FILL, (bx, by, int(bw * self.progress), bh))
 
 
+class Framebuffer:
+    """Direct output to /dev/fb0 (the EFI/simpledrm framebuffer). No GPU driver
+    or GL needed — works the same in QEMU and on real hardware's EFI fb."""
+
+    def __init__(self, dev="/dev/fb0"):
+        import fcntl
+        import mmap
+        import struct
+        self.fd = os.open(dev, os.O_RDWR)
+        v = fcntl.ioctl(self.fd, 0x4600, bytes(160))   # FBIOGET_VSCREENINFO
+        self.xres, self.yres = struct.unpack_from("II", v, 0)
+        self.bpp = struct.unpack_from("I", v, 24)[0]
+        f = fcntl.ioctl(self.fd, 0x4602, bytes(80))     # FBIOGET_FSCREENINFO
+        self.stride = struct.unpack_from("I", f, 48)[0]
+        self.mm = mmap.mmap(self.fd, self.stride * self.yres)
+        print(f"[craftboot] framebuffer {self.xres}x{self.yres} {self.bpp}bpp stride={self.stride}")
+
+    def blit(self, surface):
+        import numpy as np
+        rgb = np.transpose(pygame.surfarray.array3d(surface), (1, 0, 2))  # (h,w,3)
+        h, w = rgb.shape[:2]
+        bypp = max(1, self.bpp // 8)
+        px = np.zeros((h, w, bypp), np.uint8)
+        if bypp >= 3:                       # BGR(X) order for typical 32bpp fb
+            px[..., 0] = rgb[..., 2]
+            px[..., 1] = rgb[..., 1]
+            px[..., 2] = rgb[..., 0]
+        frame = np.zeros((self.yres, self.stride), np.uint8)
+        flat = px.reshape(h, w * bypp)
+        rh, cw = min(h, self.yres), min(w * bypp, self.stride)
+        frame[:rh, :cw] = flat[:rh, :cw]
+        self.mm.seek(0)
+        self.mm.write(frame.tobytes())
+
+    def close(self):
+        try:
+            self.mm.close()
+            os.close(self.fd)
+        except Exception:
+            pass
+
+
+class EvdevKeyboard:
+    """Read key presses straight from /dev/input/event* (no SDL/X needed)."""
+
+    KEYS = {103: "up", 17: "up", 108: "down", 31: "down",
+            28: "select", 96: "select", 57: "select",
+            1: "back"}  # esc
+
+    def __init__(self):
+        import glob
+        self.fds = []
+        for path in sorted(glob.glob("/dev/input/event*")):
+            try:
+                self.fds.append(os.open(path, os.O_RDONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+
+    def poll(self):
+        import select
+        import struct
+        actions = []
+        if not self.fds:
+            return actions
+        size = struct.calcsize("@llHHi")
+        r, _, _ = select.select(self.fds, [], [], 0)
+        for fd in r:
+            try:
+                data = os.read(fd, size * 64)
+            except OSError:
+                continue
+            for off in range(0, len(data) - size + 1, size):
+                _, _, etype, code, value = struct.unpack_from("@llHHi", data, off)
+                if etype == 1 and value == 1 and code in self.KEYS:  # EV_KEY press
+                    actions.append(self.KEYS[code])
+        return actions
+
+    def close(self):
+        for fd in self.fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 def _find_windows_bootnum():
     """Look up the 'Windows Boot Manager' entry number from efibootmgr."""
     try:
@@ -647,21 +732,29 @@ def pick_default_entry(menu):
 
 
 def main(argv):
+    fb_mode = "--fb" in argv          # render to /dev/fb0 + evdev input (boot env)
     windowed = "--windowed" in argv
-    pygame.init()
-    pygame.display.set_caption("craftboot")
-    if windowed:
-        screen = pygame.display.set_mode((1280, 720))
-    else:
-        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-    pygame.mouse.set_visible(True)
-
     bg_mode = "photos"
     if "--bg" in argv:
         i = argv.index("--bg")
         if i + 1 < len(argv):
             bg_mode = argv[i + 1]
-    live = "--live" in argv  # actually boot on selection (needs root); else dry-run
+    live = "--live" in argv           # actually boot on selection; else dry-run
+
+    fb = kbd = None
+    if fb_mode:
+        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+        os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+        pygame.init()
+        fb = Framebuffer()
+        screen = pygame.Surface((fb.xres, fb.yres))
+        kbd = EvdevKeyboard()
+    else:
+        pygame.init()
+        pygame.display.set_caption("craftboot")
+        screen = (pygame.display.set_mode((1280, 720)) if windowed
+                  else pygame.display.set_mode((0, 0), pygame.FULLSCREEN))
+        pygame.mouse.set_visible(True)
 
     fonts = Fonts(screen.get_size()[1])
     config = load_config()
@@ -675,41 +768,56 @@ def main(argv):
     remaining = float(TIMEOUT_SECONDS)
     autoboot = True
     running = True
+
+    def activate():
+        nonlocal state, pending, loading
+        chosen = menu.select()
+        if chosen and chosen["type"] in ("windows", "kexec"):
+            pending = chosen
+            loading = LoadingScreen(screen, fonts, chosen["label"])
+            state = "loading"
+        elif chosen:
+            perform_handoff(chosen, live)
+
     while running:
         dt = clock.tick(60) / 1000.0
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif state == "menu" and event.type == pygame.KEYDOWN:
-                autoboot = False  # any key cancels auto-boot entirely (like GRUB)
-                if event.key in (pygame.K_ESCAPE,):
-                    if not menu.back():
-                        running = False
-                elif event.key in (pygame.K_UP, pygame.K_w):
-                    menu.move(-1)
-                elif event.key in (pygame.K_DOWN, pygame.K_s):
-                    menu.move(1)
-                elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
-                    chosen = menu.select()
-                    if chosen and chosen["type"] in ("windows", "kexec"):
-                        pending = chosen
-                        loading = LoadingScreen(screen, fonts, chosen["label"])
-                        state = "loading"
-                    elif chosen:
-                        perform_handoff(chosen, live)
-            elif state == "menu" and event.type == pygame.MOUSEMOTION:
-                menu.point(event.pos)
-            elif state == "menu" and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                autoboot = False  # clicking cancels auto-boot too
-                if menu.point(event.pos):
-                    chosen = menu.select()
-                    if chosen and chosen["type"] in ("windows", "kexec"):
-                        pending = chosen
-                        loading = LoadingScreen(screen, fonts, chosen["label"])
-                        state = "loading"
-                    elif chosen:
-                        perform_handoff(chosen, live)
 
+        # ---- collect input actions (fb: evdev, else: pygame/mouse) ----
+        actions = []
+        if fb_mode:
+            actions = kbd.poll()
+        else:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    actions.append("quit")
+                elif event.type == pygame.KEYDOWN:
+                    actions.append({pygame.K_ESCAPE: "back", pygame.K_UP: "up",
+                                    pygame.K_w: "up", pygame.K_DOWN: "down",
+                                    pygame.K_s: "down", pygame.K_RETURN: "select",
+                                    pygame.K_KP_ENTER: "select",
+                                    pygame.K_SPACE: "select"}.get(event.key, ""))
+                elif event.type == pygame.MOUSEMOTION and state == "menu":
+                    menu.point(event.pos)
+                elif (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                      and state == "menu"):
+                    if menu.point(event.pos):
+                        actions.append("select")
+
+        for a in actions:
+            if a == "quit":
+                running = False
+            elif state == "menu" and a:
+                autoboot = False  # any interaction cancels auto-boot (like GRUB)
+                if a == "up":
+                    menu.move(-1)
+                elif a == "down":
+                    menu.move(1)
+                elif a == "select":
+                    activate()
+                elif a == "back" and not menu.back():
+                    running = False
+
+        # ---- update + draw ----
         if state == "menu":
             if autoboot:
                 remaining -= dt
@@ -725,19 +833,28 @@ def main(argv):
                         autoboot = False
             else:
                 menu.countdown = None
-        if state == "menu":
             panorama.update(dt)
             panorama.draw(screen)
             menu.draw(screen)
         elif state == "loading":
-            done = loading.update(dt)
-            loading.draw(screen)
-            if done:
+            if loading.update(dt):
+                loading.draw(screen)
+                if fb_mode:
+                    fb.blit(screen)
                 perform_handoff(pending, live)
                 running = False
+            else:
+                loading.draw(screen)
 
-        pygame.display.flip()
+        if fb_mode:
+            fb.blit(screen)
+        else:
+            pygame.display.flip()
 
+    if kbd:
+        kbd.close()
+    if fb:
+        fb.close()
     pygame.quit()
     return 0
 
