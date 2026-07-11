@@ -683,21 +683,30 @@ def _find_windows_bootnum():
 
 
 def _handoff_commands(entry):
-    """Return the list of commands that boot `entry`, or None if unsupported."""
+    """Return the list of commands that boot `entry`, or None if unsupported.
+
+    In the boot environment (initramfs) CRAFTBOOT_ROOT is the read-only mount of
+    the real Ubuntu root, so kernel/initrd live under it, and we use kexec -e /
+    reboot -f instead of systemctl (there is no systemd there)."""
     t = entry["type"]
+    root = os.environ.get("CRAFTBOOT_ROOT", "")           # e.g. "/mnt" in the initramfs
+    initramfs = bool(root) or "CRAFTBOOT_INITRAMFS" in os.environ
     if t == "kexec":
         # -s = kexec_file_load: accepts the Canonical-signed kernel under Secure Boot
-        return [
-            ["kexec", "-s", "-l", entry["kernel"],
-             f"--initrd={entry['initrd']}", f"--command-line={entry['cmdline']}"],
-            ["systemctl", "kexec"],
-        ]
+        cmds = [["kexec", "-s", "-l", root + entry["kernel"],
+                 f"--initrd={root + entry['initrd']}",
+                 f"--command-line={entry['cmdline']}"]]
+        cmds.append(["kexec", "-e"] if initramfs else ["systemctl", "kexec"])
+        return cmds
     if t == "windows":
         num = _find_windows_bootnum()
         if not num:
             return None
-        return [["efibootmgr", "-n", num], ["systemctl", "reboot"]]
+        reboot = ["reboot", "-f"] if initramfs else ["systemctl", "reboot"]
+        return [["efibootmgr", "-n", num], reboot]
     if t == "uefi":
+        if initramfs:
+            return None       # firmware-setup handoff not implemented in the boot env yet
         return [["systemctl", "reboot", "--firmware-setup"]]
     return None  # info / not yet implemented (e.g. memtest)
 
@@ -715,11 +724,12 @@ def perform_handoff(entry, live=False):
     if not live:
         print("[craftboot] (dry-run; pass --live to actually boot)")
         return
-    # In the boot environment the app runs as root; on the desktop, use sudo
-    # (run `sudo -v` first to cache credentials so it doesn't block).
-    runner = [] if os.geteuid() == 0 else ["sudo"]
-    for c in cmds:
-        subprocess.run(runner + c, check=True)
+    runner = [] if os.geteuid() == 0 else ["sudo"]  # root in boot env; sudo on desktop
+    try:
+        for c in cmds:
+            subprocess.run(runner + c, check=True)
+    except Exception as e:
+        print(f"[craftboot] handoff failed: {e}")  # fall through -> init reboots
 
 
 def pick_default_entry(menu):

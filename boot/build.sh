@@ -9,6 +9,7 @@ APP="$HERE/../app"
 B="$HERE/build"
 ROOT="$B/root"
 KREL="$(uname -r)"
+ROOT_UUID="$(findmnt -no UUID /)"     # baked into init so it can mount the real root
 PYBIN="$(readlink -f "$(command -v python3)")"
 STDLIB="$(python3 -c 'import sys;print(sys.base_prefix+"/lib/python%d.%d"%sys.version_info[:2])')"
 PYGAME_DIR="$(PYGAME_HIDE_SUPPORT_PROMPT=1 python3 -c 'import pygame,os;print(os.path.dirname(pygame.__file__))' 2>/dev/null || true)"
@@ -32,7 +33,7 @@ copy_tree() {   # copy a dir verbatim, then resolve libs of every .so inside it
 echo "==> busybox"
 copy_bin /usr/bin/busybox
 for a in busybox sh mount umount ls cat echo mkdir sleep switch_root poweroff \
-         reboot dmesg uname ln cp env; do
+         reboot dmesg uname ln cp env findfs sync; do
     ln -sf /usr/bin/busybox "$ROOT/bin/$a"
 done
 
@@ -59,11 +60,15 @@ for f in modules.dep modules.dep.bin modules.alias modules.alias.bin modules.sym
          modules.order; do
     [[ -f "$MODDIR/$f" ]] && cp "$MODDIR/$f" "$ROOT$MODDIR/" 2>/dev/null || true
 done
-for m in usbhid hid_generic hid_asus i2c_hid_acpi; do
+for m in usbhid hid_generic hid_asus i2c_hid_acpi nvme; do
     modprobe --show-depends "$m" 2>/dev/null | awk '/^insmod/{print $2}' | while read -r ko; do
         [[ -f "$ko" ]] && cp -L --parents "$ko" "$ROOT" 2>/dev/null || true
     done || true
 done
+
+echo "==> handoff tools (kexec, efibootmgr)"
+copy_bin /usr/sbin/kexec
+copy_bin /usr/bin/efibootmgr
 
 echo "==> app"
 cp -a "$APP/." "$ROOT/craftboot/"
@@ -74,19 +79,28 @@ cat > "$ROOT/init" <<'EOF'
 #!/bin/sh
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export PYTHONPATH=/usr/lib/python3/dist-packages
-export PYTHONDONTWRITEBYTECODE=1 HOME=/root
-mkdir -p /root
+export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/root
+mkdir -p /root /mnt
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
-# USB HID keyboard (xhci host controller is built into the kernel)
-for m in usbhid hid_generic hid_asus i2c_hid_acpi; do modprobe "$m" 2>/dev/null; done
-sleep 3   # let USB enumerate the keyboard -> /dev/input/event*
-echo "[craftboot] starting menu (fb mode)..."
-python3 /craftboot/main.py --fb
-echo "[craftboot] app exited ($?). Rebooting in 8s (hold power to interrupt)..."
-sync; sleep 8; reboot -f
+[ -e /dev/kmsg ] && exec >/dev/kmsg 2>&1   # clean screen: logs -> dmesg, not the display
+# modules: USB HID keyboard + nvme disk (xhci/ext4/efivarfs are built into the kernel)
+for m in usbhid hid_generic hid_asus i2c_hid_acpi nvme; do modprobe "$m" 2>/dev/null; done
+mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null
+sleep 3                       # let USB + nvme enumerate
+# mount the real Ubuntu root read-only so the app can kexec its kernel
+ROOTDEV=$(findfs UUID=__ROOT_UUID__ 2>/dev/null)
+if [ -n "$ROOTDEV" ] && mount -o ro "$ROOTDEV" /mnt 2>/dev/null; then
+    export CRAFTBOOT_ROOT=/mnt
+fi
+echo "[craftboot] starting menu (fb+live); root=$ROOTDEV"
+python3 /craftboot/main.py --fb --live
+rc=$?
+[ "$rc" = 0 ] || { dmesg | tail -25 >/dev/tty1; echo "[craftboot] exited rc=$rc" >/dev/tty1; sleep 15; }
+sync; sleep 3; reboot -f
 EOF
+sed -i "s/__ROOT_UUID__/$ROOT_UUID/" "$ROOT/init"
 chmod +x "$ROOT/init"
 
 echo "==> pack initramfs"

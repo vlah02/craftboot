@@ -47,7 +47,7 @@ menuentry 'Craftboot (Minecraft boot menu)' --id craftboot {
     insmod part_gpt
     insmod ext2
     search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
-    linux  /boot/vmlinuz-${KVER} console=tty1
+    linux  /boot/vmlinuz-${KVER} console=tty1 quiet loglevel=3 vt.global_cursor_default=0
     initrd ${INITRD}
 }
 EOF
