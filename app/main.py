@@ -55,8 +55,10 @@ CLASSIC_LOGO = "minecraft_classic.png"  # fallback when the background has no sp
 PHOTO_PAN_SECONDS = 26.0     # seconds for one left->right sweep (photos mode); higher = slower
 PHOTO_MARGIN = 1.5           # scale factor over screen size = how far it pans
 PHOTO_BLUR = 5               # background blur radius ("a little bit blurred")
-VIEW_ZOOM = 2.4              # pano mode vertical zoom
-PANO_LOOP_SECONDS = 60.0     # pano mode full-rotation time
+PANO_FOV = 100               # horizontal FOV (deg) for the 360 panorama; higher = more skew
+PANO_BLUR = 6                # blur applied to the panorama (bigger = softer)
+PANO_LOOP_SECONDS = 45.0     # seconds for one full 360 rotation
+PANO_RENDER_SCALE = 0.5      # render the pano at this fraction of screen res, then upscale
 GRAIN_CELL = 3               # button grain block size in px (bigger = chunkier)
 TIMEOUT_SECONDS = 15         # auto-boot the default entry after this many idle seconds
 
@@ -69,7 +71,8 @@ def blur_surface(surf, radius):
         return pygame.transform.gaussian_blur(surf, radius)
     except (AttributeError, pygame.error, TypeError):
         w, h = surf.get_size()
-        small = pygame.transform.smoothscale(surf, (max(1, w // 4), max(1, h // 4)))
+        f = max(2, int(radius))          # bigger radius -> more blur (downscale/upscale)
+        small = pygame.transform.smoothscale(surf, (max(1, w // f), max(1, h // f)))
         return pygame.transform.smoothscale(small, (w, h))
 
 # ---- Minecraft-ish palette -------------------------------------------------
@@ -203,28 +206,48 @@ class Panorama:
                 strip = None
         if strip is not None:
             self.mode = "pano"
-            scaled_h = int(self.sh * VIEW_ZOOM)
-            scale = scaled_h / strip.get_height()
-            self.strip = pygame.transform.smoothscale(
-                strip, (int(strip.get_width() * scale), scaled_h)
-            )
-            self.strip_w = self.strip.get_width()
-            self.max_y = max(0, self.strip.get_height() - self.sh)
-            self.speed = self.strip_w / PANO_LOOP_SECONDS
-            self.x = 0.0
-            print("[craftboot] background: 360 panorama")
+            self._init_pano(strip)
         else:
             self.mode = "drift"
             self._init_drift()
 
-    # -- 360 panorama --------------------------------------------------------
+    # -- 360 panorama: perspective projection of a rotating cubemap ----------
+    def _init_pano(self, strip):
+        import numpy as np
+        if PANO_BLUR > 0:
+            strip = blur_surface(strip, PANO_BLUR)
+        self.eq = np.ascontiguousarray(
+            np.transpose(pygame.surfarray.array3d(strip), (1, 0, 2)))   # (H,W,3)
+        self.EH, self.EW = self.eq.shape[:2]
+        # render at reduced res (it's blurred anyway) then upscale -> fast enough
+        self.rw = max(320, int(self.sw * PANO_RENDER_SCALE))
+        self.rh = max(200, int(self.sh * PANO_RENDER_SCALE))
+        # perspective LUT: each output pixel -> a camera ray -> (lat row, rel. lon)
+        th = math.tan(math.radians(PANO_FOV) / 2)
+        tv = th * (self.rh / self.rw)
+        xs = (np.arange(self.rw) - self.rw / 2) / (self.rw / 2) * th
+        ys = (self.rh / 2 - np.arange(self.rh)) / (self.rh / 2) * tv    # +Y = up (sky on top)
+        X, Y = np.meshgrid(xs, ys)                       # (rh,rw)
+        Z = np.ones_like(X)
+        lon = np.arctan2(X, Z)
+        lat = np.arctan2(Y, np.sqrt(X * X + Z * Z))
+        self.lat_idx = np.clip(((0.5 - lat / math.pi) * self.EH).astype(np.int64),
+                               0, self.EH - 1)
+        self.base_lon = (lon / (2 * math.pi)) * self.EW  # relative longitude (px)
+        self.yaw = 0.0
+        self.speed = self.EW / PANO_LOOP_SECONDS         # px/sec
+        self._surf = pygame.Surface((self.rw, self.rh))
+        print("[craftboot] background: 360 perspective panorama")
+
     def _draw_pano(self, surface):
-        yc = self.max_y * 0.5
-        y = -int(max(0, min(self.max_y, yc + math.sin(self.t * 0.15) * self.max_y * 0.4)))
-        x0 = -int(self.x)
-        surface.blit(self.strip, (x0, y))
-        if x0 + self.strip_w < self.sw:  # wrap seam
-            surface.blit(self.strip, (x0 + self.strip_w, y))
+        import numpy as np
+        bob = int(math.sin(self.t * 0.2) * self.EH * 0.015)   # subtle vertical wobble
+        col = ((self.base_lon + self.yaw) % self.EW).astype(np.int64)
+        row = np.clip(self.lat_idx + bob, 0, self.EH - 1)
+        frame = self.eq[row, col]                             # (rh,rw,3)
+        pygame.surfarray.blit_array(
+            self._surf, np.ascontiguousarray(np.transpose(frame, (1, 0, 2))))
+        surface.blit(pygame.transform.smoothscale(self._surf, (self.sw, self.sh)), (0, 0))
 
     # -- fallback: drifting screenshot --------------------------------------
     def _init_drift(self):
@@ -273,7 +296,7 @@ class Panorama:
     def update(self, dt):
         self.t += dt
         if self.mode == "pano":
-            self.x = (self.x + dt * self.speed) % self.strip_w
+            self.yaw = (self.yaw + dt * self.speed) % self.EW
 
     def draw(self, surface):
         if self.mode == "pano":
@@ -758,7 +781,7 @@ def _open_display():
 def main(argv):
     fb_mode = "--fb" in argv          # render to the screen (KMS/fbdev) + evdev input
     windowed = "--windowed" in argv
-    bg_mode = "photos"
+    bg_mode = "pano"        # default: the rotating 360 perspective panorama
     if "--bg" in argv:
         i = argv.index("--bg")
         if i + 1 < len(argv):
