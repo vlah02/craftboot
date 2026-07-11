@@ -69,7 +69,11 @@ def main():
     bot = p10 + (p11 - p10) * wu
     result = np.clip(top + (bot - top) * wv, 0, 255)  # (H, W, 3)
 
-    Image.fromarray(result.astype(np.uint8)).save(out)
+    outimg = Image.fromarray(result.astype(np.uint8))
+    if out.lower().endswith((".jpg", ".jpeg")):
+        outimg.save(out, "JPEG", quality=90, subsampling=0)
+    else:
+        outimg.save(out)
     print(f"wrote {out} ({W}x{H}) from {S}x{S} faces")
 
 

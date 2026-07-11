@@ -1,0 +1,17 @@
+{
+  "1.12_classic":          "minecraft_classic.png",
+  "1.13_aquatic":          "minecraft_aquatic.png",
+  "1.14_village":          "minecraft_village.png",
+  "1.15_bees":             "minecraft_bees.png",
+  "1.16_nether":           "minecraft_nether.png",
+  "1.17_cliffs":           "minecraft_cliffs.png",
+  "1.18_caves":            "minecraft_caves.png",
+  "1.19_wild":             "minecraft_wild.png",
+  "1.20_trails":           "minecraft_trails.png",
+  "1.21.00_tricky_trials": "minecraft_trials.png",
+  "1.21.04_pale_garden":   "minecraft_garden.png",
+  "1.21.05_spring":        "minecraft_spring.png",
+  "1.21.06_skies":         "minecraft_skies.png",
+  "1.21.09_copper":        "minecraft_copper.png",
+  "1.21.11_mounts":        "minecraft_mounts.png"
+}

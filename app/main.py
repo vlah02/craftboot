@@ -24,7 +24,7 @@ import sys
 import pygame
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ASSETS = os.path.join(HERE, "assets")
+ASSETS = os.path.join(os.path.dirname(HERE), "assets")
 FONT_PATH = os.path.join(ASSETS, "minecraft.otf")
 LOGO_FONT_PATH = os.path.join(ASSETS, "fonts", "Minecrafter.Reg.ttf")
 LOGO_IMG_PATH = os.path.join(ASSETS, "logo.png")          # optional pre-made 3D logo (textcraft/easecation)
@@ -99,7 +99,7 @@ LOAD_BAR_FILL = (128, 255, 128)
 
 
 def load_config():
-    with open(os.path.join(HERE, "boot_entries.json")) as f:
+    with open(os.path.join(os.path.dirname(HERE), "boot_entries.json")) as f:
         return json.load(f)
 
 
@@ -221,7 +221,7 @@ class Panorama:
         pdir = os.path.join(ASSETS, "panoramas")
         cands = []
         if os.path.isdir(pdir):
-            cands = [os.path.join(pdir, f) for f in os.listdir(pdir) if f.lower().endswith(".png")]
+            cands = [os.path.join(pdir, f) for f in os.listdir(pdir) if f.lower().endswith((".png", ".jpg"))]
         print(f"[craftboot] {len(cands)} panorama worlds available")
         random.shuffle(cands)
         for p in cands:
