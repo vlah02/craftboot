@@ -49,6 +49,22 @@ echo "==> SDL2"
 sdl="$(ldconfig -p | awk '$1=="libSDL2-2.0.so.0"{print $NF; exit}')"
 [[ -n "$sdl" ]] && { cp -L --parents "$sdl" "$ROOT" 2>/dev/null || true; libs_of "$sdl"; }
 
+echo "==> keyboard modules (USB HID) + kmod"
+copy_bin /usr/bin/kmod
+for t in modprobe insmod rmmod depmod lsmod; do ln -sf /usr/bin/kmod "$ROOT/sbin/$t"; done
+MODDIR="/lib/modules/$KREL"
+mkdir -p "$ROOT$MODDIR"
+for f in modules.dep modules.dep.bin modules.alias modules.alias.bin modules.symbols \
+         modules.symbols.bin modules.builtin modules.builtin.bin modules.builtin.modinfo \
+         modules.order; do
+    [[ -f "$MODDIR/$f" ]] && cp "$MODDIR/$f" "$ROOT$MODDIR/" 2>/dev/null || true
+done
+for m in usbhid hid_generic hid_asus i2c_hid_acpi; do
+    modprobe --show-depends "$m" 2>/dev/null | awk '/^insmod/{print $2}' | while read -r ko; do
+        [[ -f "$ko" ]] && cp -L --parents "$ko" "$ROOT" 2>/dev/null || true
+    done || true
+done
+
 echo "==> app"
 cp -a "$APP/." "$ROOT/craftboot/"
 find "$ROOT/craftboot" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
@@ -63,10 +79,13 @@ mkdir -p /root
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
+# USB HID keyboard (xhci host controller is built into the kernel)
+for m in usbhid hid_generic hid_asus i2c_hid_acpi; do modprobe "$m" 2>/dev/null; done
+sleep 3   # let USB enumerate the keyboard -> /dev/input/event*
 echo "[craftboot] starting menu (fb mode)..."
 python3 /craftboot/main.py --fb
-echo "[craftboot] app exited ($?); dropping to shell."
-exec sh
+echo "[craftboot] app exited ($?). Rebooting in 8s (hold power to interrupt)..."
+sync; sleep 8; reboot -f
 EOF
 chmod +x "$ROOT/init"
 
