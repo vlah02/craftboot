@@ -3,11 +3,12 @@
 #include <stddef.h>
 #include "core/render.h"
 
-typedef enum { E_WINDOWS, E_KEXEC, E_SUBMENU, E_INFO, E_UEFI, E_BACK } etype_t;
+typedef enum { E_WINDOWS, E_KEXEC, E_SUBMENU, E_INFO, E_UEFI, E_BACK, E_BOOTNEXT } etype_t;
 typedef struct {
     etype_t type;
     char id[32], label[64], target[16];
     char kernel[128], initrd[128], cmdline[256];
+    char match[64];        /* E_BOOTNEXT: firmware load-option description to match */
 } entry_t;
 typedef struct {
     char root_uuid[40];

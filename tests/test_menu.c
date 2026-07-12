@@ -23,9 +23,17 @@ static int submenu_and_back(void) {
 }
 static int select_returns_bootable(void) {
     menustate_t m; ms_init(&m, &cfg);
-    m.index = 1;                                  /* Ubuntu */
+    m.index = 1;                                  /* Ubuntu (BootNext since M4) */
     const entry_t *e = ms_select(&m);
-    OK(e && e->type == E_KEXEC);
+    OK(e && e->type == E_BOOTNEXT);
+    OK(strcmp(e->match, "Ubuntu") == 0);
+    return 0;
+}
+static int bootnext_is_default_bootable(void) {
+    menustate_t m; ms_init(&m, &cfg);
+    m.index = 1;                                  /* highlight Ubuntu */
+    const entry_t *d = ms_default_entry(&m);
+    OK(d && d->type == E_BOOTNEXT);               /* countdown boots the highlight */
     return 0;
 }
 static int countdown_and_default(void) {
@@ -61,5 +69,6 @@ static int countdown_expiry_clamps_to_zero(void) {
     return 0;
 }
 int main(void) { setup(); RUN(nav_wraps); RUN(submenu_and_back);
-                 RUN(select_returns_bootable); RUN(countdown_and_default);
+                 RUN(select_returns_bootable); RUN(bootnext_is_default_bootable);
+                 RUN(countdown_and_default);
                  RUN(move_large_delta_safe); RUN(countdown_expiry_clamps_to_zero); return 0; }

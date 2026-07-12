@@ -7,10 +7,12 @@ static int loads_real_config(void) {
     OK(c.nmenu[0] == 3);
     OK(c.menu[0][0].type == E_WINDOWS);
     OK(strcmp(c.menu[0][0].label, "Windows") == 0);
-    OK(c.menu[0][1].type == E_KEXEC);
-    OK(strcmp(c.menu[0][1].kernel, "/boot/vmlinuz") == 0);
+    OK(c.menu[0][1].type == E_BOOTNEXT);
+    OK(strcmp(c.menu[0][1].match, "Ubuntu") == 0);
     OK(c.menu[0][2].type == E_SUBMENU);
     OK(c.nmenu[1] == 4);
+    OK(c.menu[1][0].type == E_KEXEC);           /* recovery keeps kexec */
+    OK(strcmp(c.menu[1][0].kernel, "/boot/vmlinuz") == 0);
     OK(c.menu[1][3].type == E_BACK);
     return 0;
 }

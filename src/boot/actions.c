@@ -74,7 +74,7 @@ int efi_load_option_description(const unsigned char *v, size_t n,
 
 /* Validates a Boot#### efivarfs filename against the EFI_GLOBAL_VARIABLE
  * GUID and, on match, extracts the 4-hex-digit boot number. Split out of
- * find_windows_bootnum() so the filename check is independently testable --
+ * find_bootnum_by_desc() so the filename check is independently testable --
  * sscanf("Boot%4x-" EFI_GLOBAL) is not safe here because sscanf's %x
  * conversion can succeed and return 1 even when the trailing GUID literal
  * fails to match, silently accepting a wrong-GUID name. */
@@ -111,7 +111,10 @@ static void rw_immutable_off(const char *path) {
     close(fd);
 }
 
-static int find_windows_bootnum(unsigned *out) {
+/* Scan the Boot#### load options for one whose UCS-2-decoded description
+ * equals `want` exactly. Used by E_WINDOWS ("Windows Boot Manager") and by
+ * E_BOOTNEXT entries (config-supplied "match" string). */
+static int find_bootnum_by_desc(const char *want, unsigned *out) {
     DIR *d = opendir(EFIVARS);
     if (!d) return -1;
     struct dirent *e;
@@ -128,7 +131,7 @@ static int find_windows_bootnum(unsigned *out) {
         fclose(f);
         char desc[128];
         if (efi_load_option_description(buf, n, desc, sizeof desc) == 0 &&
-            strcmp(desc, "Windows Boot Manager") == 0) {
+            strcmp(desc, want) == 0) {
             *out = num;
             found = 0;
             break;
@@ -204,6 +207,26 @@ static int do_kexec(const char *kp, const char *ip, const char *cmdline) {
     return -1;
 }
 
+/* Shared by E_WINDOWS and E_BOOTNEXT: find the load option whose UCS-2
+ * description equals `want`, stage its number in BootNext, and reboot into
+ * the firmware's own loader. `name` is the short name used in diagnostics
+ * ("Windows" / the match string). Never returns on live success. */
+static int do_bootnext(const entry_t *e, const char *want, const char *name,
+                       const char *mode, int live) {
+    unsigned num = 0;
+    int found = find_bootnum_by_desc(want, &num) == 0;
+    fprintf(stderr, "[craftboot] %s: %s (id=%s)\n", mode, e->label, e->id);
+    if (found) fprintf(stderr, "           match \"%s\" -> BootNext Boot%04X\n", want, num);
+    else fprintf(stderr, "           no %s entry\n", name);
+    if (!live) return 0;
+    if (!found) { fprintf(stderr, "[craftboot] no %s entry\n", name); return -1; }
+    if (set_bootnext(num)) return -1;
+    sync();
+    reboot(RB_AUTOBOOT);
+    perror("[craftboot] reboot(RB_AUTOBOOT)");   /* only reached on failure */
+    return -1;
+}
+
 int action_execute(const entry_t *e, const char *root, int live) {
     const char *mode = live ? "LIVE handoff" : "dry-run handoff";
     switch (e->type) {
@@ -225,20 +248,15 @@ int action_execute(const entry_t *e, const char *root, int live) {
         if (!live) return 0;
         return do_kexec(kp, ip, e->cmdline);
     }
-    case E_WINDOWS: {
-        unsigned num = 0;
-        int found = find_windows_bootnum(&num) == 0;
-        fprintf(stderr, "[craftboot] %s: %s (id=%s)\n", mode, e->label, e->id);
-        if (found) fprintf(stderr, "           BootNext -> Boot%04X\n", num);
-        else fprintf(stderr, "           no Windows entry\n");
-        if (!live) return 0;
-        if (!found) { fprintf(stderr, "[craftboot] no Windows entry\n"); return -1; }
-        if (set_bootnext(num)) return -1;
-        sync();
-        reboot(RB_AUTOBOOT);
-        perror("[craftboot] reboot(RB_AUTOBOOT)");   /* only reached on failure */
-        return -1;
-    }
+    case E_WINDOWS:
+        return do_bootnext(e, "Windows Boot Manager", "Windows", mode, live);
+    case E_BOOTNEXT:
+        if (!e->match[0]) {
+            fprintf(stderr, "[craftboot] %s: %s (id=%s)\n", mode, e->label, e->id);
+            fprintf(stderr, "[craftboot] bootnext entry '%s' has no match string\n", e->id);
+            return -1;
+        }
+        return do_bootnext(e, e->match, e->match, mode, live);
     case E_UEFI:
         fprintf(stderr, "[craftboot] %s: %s (id=%s)\n", mode, e->label, e->id);
         fprintf(stderr, "           set OsIndications BOOT_TO_FW_UI, reboot\n");

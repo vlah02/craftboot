@@ -26,8 +26,9 @@ static int skip(const jsmntok_t *t, int nt, int i) {   /* index just past token 
     return j;
 }
 static etype_t etype(const char *s) {
-    if (!strcmp(s, "windows")) return E_WINDOWS;
-    if (!strcmp(s, "kexec"))   return E_KEXEC;
+    if (!strcmp(s, "windows"))  return E_WINDOWS;
+    if (!strcmp(s, "kexec"))    return E_KEXEC;
+    if (!strcmp(s, "bootnext")) return E_BOOTNEXT;
     if (!strcmp(s, "submenu")) return E_SUBMENU;
     if (!strcmp(s, "uefi"))    return E_UEFI;
     if (!strcmp(s, "back"))    return E_BACK;
@@ -46,6 +47,7 @@ static void parse_entry(const char *js, const jsmntok_t *t, int nt, int obj, ent
         else if (teq(js, key, "kernel"))  tcpy(e->kernel, sizeof e->kernel, js, val);
         else if (teq(js, key, "initrd"))  tcpy(e->initrd, sizeof e->initrd, js, val);
         else if (teq(js, key, "cmdline")) tcpy(e->cmdline, sizeof e->cmdline, js, val);
+        else if (teq(js, key, "match"))   tcpy(e->match, sizeof e->match, js, val);
         i = skip(t, nt, i + 1);
     }
 }
