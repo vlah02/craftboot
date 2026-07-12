@@ -5,6 +5,9 @@
 #include "boot/actions.h"
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
 
 int main(int argc, char **argv) {
     int live = 0;
@@ -13,6 +16,18 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[i], "--live")) live = 1;
         else if (!strcmp(argv[i], "--assets") && i + 1 < argc) assets = argv[++i];
     }
+
+    if (getpid() == 1) {
+        /* Minimal M2 bootstrap: just enough for /dev/dri and /dev/input to
+         * exist. Devtmpfs auto-mount does not apply inside an initramfs, so
+         * mount it ourselves; same for /proc. Real PID-1 duties (real root
+         * mount, kexec handoff, reboot/poweroff handling) land in Task 14. */
+        mkdir("/dev", 0755);
+        mount("devtmpfs", "/dev", "devtmpfs", 0, NULL);
+        mkdir("/proc", 0755);
+        mount("proc", "/proc", "proc", 0, NULL);
+    }
+
     config_t cfg;
     char cfgpath[256];
     snprintf(cfgpath, sizeof cfgpath, "boot_entries.json");
