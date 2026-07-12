@@ -39,5 +39,11 @@ $(B)/test_%: tests/test_%.c $(CORE) $(B)/actions.o
 test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done; echo "ALL TESTS PASS"
 
+bench: $(B)/bench_pano
+$(B)/bench_pano: tests/bench_pano.c $(CORE)
+	@mkdir -p $(B); $(CC) $(CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
+	./$@
+.PHONY: bench
+
 clean: ; rm -rf $(B)
-.PHONY: all dev test clean
+.PHONY: all dev test clean bench

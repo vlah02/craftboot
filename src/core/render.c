@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
+#include <pthread.h>
 
 uint32_t mix_xrgb(uint32_t a, uint32_t b, unsigned w) {
     uint32_t rb = ((a & 0xFF00FF) * (256 - w) + (b & 0xFF00FF) * w) >> 8 & 0xFF00FF;
@@ -144,4 +146,84 @@ img_t text_render(const font_t *f, const char *s, uint32_t rgb, int outline_px) 
     }
     free(tmp_fb.px);
     return o;
+}
+
+struct pano {
+    uint32_t *src;          /* RGBX equirect, row-major */
+    int ew, eh;             /* equirect dims */
+    int w, h;               /* output dims */
+    int nthreads;
+    int32_t *baselon;       /* per output px, 16.16 fixed, in [0, EW<<16) */
+    int32_t *row0, *row1;   /* per output px, source row offsets (already *ew) */
+    uint16_t *wv;           /* per output px, vertical weight 0..256 */
+};
+
+pano_t *pano_create(const img_t *eq, int out_w, int out_h, float fov_deg) {
+    pano_t *p = calloc(1, sizeof *p);
+    p->ew = eq->w; p->eh = eq->h; p->w = out_w; p->h = out_h;
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    p->nthreads = ncpu > 8 ? 8 : (ncpu < 1 ? 1 : (int)ncpu);
+    p->src = malloc((size_t)eq->w * eq->h * 4);
+    for (long i = 0; i < (long)eq->w * eq->h; i++)
+        p->src[i] = (uint32_t)eq->rgba[i*4] << 16 | (uint32_t)eq->rgba[i*4+1] << 8 | eq->rgba[i*4+2];
+    long n = (long)out_w * out_h;
+    p->baselon = malloc(n * 4); p->row0 = malloc(n * 4); p->row1 = malloc(n * 4);
+    p->wv = malloc(n * 2);
+    double th = tan(fov_deg * M_PI / 360.0), tv = th * out_h / out_w;
+    for (int j = 0; j < out_h; j++) {
+        double y = (out_h / 2.0 - (j + 0.5)) / (out_h / 2.0) * tv;
+        for (int i = 0; i < out_w; i++) {
+            double x = ((i + 0.5) - out_w / 2.0) / (out_w / 2.0) * th;
+            double lon = atan2(x, 1.0);
+            double lat = atan2(y, sqrt(x * x + 1.0));
+            double rowf = (0.5 - lat / M_PI) * p->eh;
+            if (rowf < 0) rowf = 0;
+            if (rowf > p->eh - 1) rowf = p->eh - 1;
+            int r0 = (int)rowf, r1 = r0 + 1 < p->eh ? r0 + 1 : r0;
+            double lonpx = lon / (2 * M_PI) * p->ew;      /* [-EW/2, EW/2) */
+            if (lonpx < 0) lonpx += p->ew;
+            long k = (long)j * out_w + i;
+            p->baselon[k] = (int32_t)(lonpx * 65536.0);
+            p->row0[k] = r0 * p->ew;
+            p->row1[k] = r1 * p->ew;
+            p->wv[k]  = (uint16_t)((rowf - r0) * 256.0);
+        }
+    }
+    return p;
+}
+
+typedef struct { pano_t *p; fb_t *out; int64_t yawfx; int j0, j1; } slice_t;
+static void *render_slice(void *arg) {
+    slice_t *s = arg; pano_t *p = s->p;
+    const int64_t EWFX = (int64_t)p->ew << 16;
+    for (int j = s->j0; j < s->j1; j++) {
+        long k = (long)j * p->w;
+        for (int i = 0; i < p->w; i++, k++) {
+            int64_t col = p->baselon[k] + s->yawfx;
+            if (col >= EWFX) col -= EWFX;
+            int c0 = (int)(col >> 16);
+            int c1 = c0 + 1 == p->ew ? 0 : c0 + 1;
+            unsigned wu = (unsigned)(col >> 8) & 0xff;
+            const uint32_t *r0 = p->src + p->row0[k], *r1 = p->src + p->row1[k];
+            uint32_t top = mix_xrgb(r0[c0], r0[c1], wu);
+            uint32_t bot = mix_xrgb(r1[c0], r1[c1], wu);
+            s->out->px[k] = mix_xrgb(top, bot, p->wv[k]);
+        }
+    }
+    return NULL;
+}
+void pano_render(pano_t *p, fb_t *out, double yaw_turns) {
+    double t = fmod(yaw_turns, 1.0); if (t < 0) t += 1.0;
+    int64_t yawfx = (int64_t)(t * p->ew * 65536.0);
+    int nt = p->nthreads;
+    pthread_t th[8]; slice_t sl[8];
+    for (int i = 0; i < nt; i++) {
+        sl[i] = (slice_t){ p, out, yawfx, p->h * i / nt, p->h * (i + 1) / nt };
+        if (i < nt - 1) pthread_create(&th[i], NULL, render_slice, &sl[i]);
+    }
+    render_slice(&sl[nt - 1]);
+    for (int i = 0; i < nt - 1; i++) pthread_join(th[i], NULL);
+}
+void pano_destroy(pano_t *p) {
+    free(p->src); free(p->baselon); free(p->row0); free(p->row1); free(p->wv); free(p);
 }
