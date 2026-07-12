@@ -10,9 +10,10 @@ LDLIBS  := -lpthread -lm
 B       := build
 
 CORE    := $(B)/render.o $(B)/assets.o $(B)/menu.o
-SHIP    := $(B)/display_drm.o $(B)/input_evdev.o $(B)/actions.o $(B)/main.o
+SHIP    := $(B)/display_drm.o $(B)/input_evdev.o $(B)/actions.o $(B)/initlib.o $(B)/main.o
 DEVOBJ  := $(B)/dev_render.o $(B)/dev_assets.o $(B)/dev_menu.o \
-           $(B)/dev_display_sdl.o $(B)/dev_input_sdl.o $(B)/dev_actions.o $(B)/dev_main.o
+           $(B)/dev_display_sdl.o $(B)/dev_input_sdl.o $(B)/dev_actions.o \
+           $(B)/dev_initlib.o $(B)/dev_main.o
 
 all: $(B)/craftboot
 dev: $(B)/craftboot-dev
@@ -34,7 +35,9 @@ $(B)/craftboot-dev: $(DEVOBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(shell sdl2-config --libs) $(LDLIBS)
 
 TESTS := $(patsubst tests/%.c,$(B)/%,$(wildcard tests/test_*.c))
-$(B)/test_%: tests/test_%.c $(CORE) $(B)/actions.o $(B)/display_drm.o $(B)/input_evdev.o
+# initlib.o (uuid_parse16 / ext4_uuid_matches) is linked into every test so
+# the generic pattern rule covers test_uuid.c too, without a special case.
+$(B)/test_%: tests/test_%.c $(CORE) $(B)/actions.o $(B)/display_drm.o $(B)/input_evdev.o $(B)/initlib.o
 	@mkdir -p $(B); $(CC) $(CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
 test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done; echo "ALL TESTS PASS"
