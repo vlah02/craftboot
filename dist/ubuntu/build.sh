@@ -31,7 +31,11 @@ echo "==> kernel modules (resolved + decompressed at build time)"
 mkdir -p "$ROOT/modules"
 : > "$ROOT/modules.list"
 for m in usbhid hid_generic hid_asus i2c_hid_acpi nvme virtio_blk; do
-    modprobe -S "$KREL" --show-depends "$m" 2>/dev/null | awk '/^insmod/{print $2}'
+    # if-guard: a module that doesn't resolve for this kernel must not kill
+    # the whole stage under set -e/pipefail — warn on stderr and keep going.
+    if ! modprobe -S "$KREL" --show-depends "$m" 2>/dev/null | awk '/^insmod/{print $2}'; then
+        echo "    [!] module $m not resolvable for $KREL (skipping)" >&2
+    fi
 done | awk '!seen[$0]++' | while read -r ko; do
     base="$(basename "$ko")"
     out="$ROOT/modules/${base%.zst}"; out="${out%.xz}"
