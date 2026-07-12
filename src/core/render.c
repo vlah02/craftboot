@@ -4,6 +4,9 @@
 #include <math.h>
 #include <unistd.h>
 #include <pthread.h>
+#ifndef PANO_NO_AVX2
+#include <immintrin.h>
+#endif
 
 uint32_t mix_xrgb(uint32_t a, uint32_t b, unsigned w) {
     uint32_t rb = ((a & 0xFF00FF) * (256 - w) + (b & 0xFF00FF) * w) >> 8 & 0xFF00FF;
@@ -198,7 +201,50 @@ static void *render_slice(void *arg) {
     const int64_t EWFX = (int64_t)p->ew << 16;
     for (int j = s->j0; j < s->j1; j++) {
         long k = (long)j * p->w;
-        for (int i = 0; i < p->w; i++, k++) {
+        int i = 0;
+#ifndef PANO_NO_AVX2
+        /* col/EWFX stay positive and well under 2^31 for realistic equirect
+         * widths (EW <= a few thousand, so 2*EWFX << INT32_MAX), so the
+         * epi32 arithmetic below is safe and cmpgt_epi32 behaves as an
+         * unsigned compare. */
+        const __m256i EW    = _mm256_set1_epi32(p->ew);
+        const __m256i EWFXv = _mm256_set1_epi32(p->ew << 16);
+        const __m256i yawv  = _mm256_set1_epi32((int32_t)s->yawfx);
+        const __m256i m8    = _mm256_set1_epi32(0xff);
+        const __m256i rbm   = _mm256_set1_epi32(0xFF00FF), gm = _mm256_set1_epi32(0x00FF00);
+        const __m256i one   = _mm256_set1_epi32(1);
+        const __m256i c256  = _mm256_set1_epi32(256);
+        for (; i + 8 <= p->w; i += 8, k += 8) {
+            __m256i col = _mm256_add_epi32(_mm256_loadu_si256((const __m256i *)&p->baselon[k]), yawv);
+            __m256i ge  = _mm256_cmpgt_epi32(col, _mm256_sub_epi32(EWFXv, one));   /* col >= EWFX */
+            col = _mm256_sub_epi32(col, _mm256_and_si256(ge, EWFXv));
+            __m256i c0 = _mm256_srli_epi32(col, 16);
+            __m256i c1 = _mm256_add_epi32(c0, one);
+            c1 = _mm256_sub_epi32(c1, _mm256_and_si256(_mm256_cmpeq_epi32(c1, EW), EW));
+            __m256i wu = _mm256_and_si256(_mm256_srli_epi32(col, 8), m8);
+            __m256i r0 = _mm256_loadu_si256((const __m256i *)&p->row0[k]);
+            __m256i r1 = _mm256_loadu_si256((const __m256i *)&p->row1[k]);
+            __m256i p00 = _mm256_i32gather_epi32((const int *)p->src, _mm256_add_epi32(r0, c0), 4);
+            __m256i p01 = _mm256_i32gather_epi32((const int *)p->src, _mm256_add_epi32(r0, c1), 4);
+            __m256i p10 = _mm256_i32gather_epi32((const int *)p->src, _mm256_add_epi32(r1, c0), 4);
+            __m256i p11 = _mm256_i32gather_epi32((const int *)p->src, _mm256_add_epi32(r1, c1), 4);
+            __m256i iwu = _mm256_sub_epi32(c256, wu);
+            #define MIXV(a, b, w, iw) _mm256_or_si256( \
+                _mm256_and_si256(_mm256_srli_epi32(_mm256_add_epi32( \
+                    _mm256_mullo_epi32(_mm256_and_si256(a, rbm), iw), \
+                    _mm256_mullo_epi32(_mm256_and_si256(b, rbm), w)), 8), rbm), \
+                _mm256_and_si256(_mm256_srli_epi32(_mm256_add_epi32( \
+                    _mm256_mullo_epi32(_mm256_and_si256(a, gm), iw), \
+                    _mm256_mullo_epi32(_mm256_and_si256(b, gm), w)), 8), gm))
+            __m256i top = MIXV(p00, p01, wu, iwu);
+            __m256i bot = MIXV(p10, p11, wu, iwu);
+            __m256i wvv = _mm256_cvtepu16_epi32(_mm_loadu_si128((const __m128i *)&p->wv[k]));
+            __m256i iwv = _mm256_sub_epi32(c256, wvv);
+            _mm256_storeu_si256((__m256i *)&s->out->px[k], MIXV(top, bot, wvv, iwv));
+            #undef MIXV
+        }
+#endif
+        for (; i < p->w; i++, k++) {
             int64_t col = p->baselon[k] + s->yawfx;
             if (col >= EWFX) col -= EWFX;
             int c0 = (int)(col >> 16);
