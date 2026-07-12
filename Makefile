@@ -34,22 +34,22 @@ $(B)/craftboot-dev: $(DEVOBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(shell sdl2-config --libs) $(LDLIBS)
 
 TESTS := $(patsubst tests/%.c,$(B)/%,$(wildcard tests/test_*.c))
-$(B)/test_%: tests/test_%.c $(CORE) $(B)/actions.o
+$(B)/test_%: tests/test_%.c $(CORE) $(B)/actions.o $(B)/display_drm.o $(B)/input_evdev.o
 	@mkdir -p $(B); $(CC) $(CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
 test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done; echo "ALL TESTS PASS"
 
 bench: $(B)/bench_pano
-$(B)/bench_pano: tests/bench_pano.c $(CORE)
+$(B)/bench_pano: tests/bench_pano.c $(CORE) $(B)/display_drm.o $(B)/input_evdev.o
 	@mkdir -p $(B); $(CC) $(CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
 	./$@
 .PHONY: bench
 
-diff-pano: $(CORE)
+diff-pano: $(CORE) $(B)/display_drm.o $(B)/input_evdev.o
 	@mkdir -p $(B)
 	$(CC) $(CFLAGS) -DPANO_NO_AVX2 -c src/core/render.c -o $(B)/render_scalar.o
-	$(CC) $(CFLAGS) -Itests -o $(B)/diff_scalar tests/diff_pano.c $(B)/render_scalar.o $(B)/assets.o $(B)/menu.o $(LDLIBS)
-	$(CC) $(CFLAGS) -Itests -o $(B)/diff_avx2 tests/diff_pano.c $(CORE) $(LDLIBS)
+	$(CC) $(CFLAGS) -Itests -o $(B)/diff_scalar tests/diff_pano.c $(B)/render_scalar.o $(B)/assets.o $(B)/menu.o $(B)/display_drm.o $(B)/input_evdev.o $(LDLIBS)
+	$(CC) $(CFLAGS) -Itests -o $(B)/diff_avx2 tests/diff_pano.c $(CORE) $(B)/display_drm.o $(B)/input_evdev.o $(LDLIBS)
 	./$(B)/diff_scalar > $(B)/frames_scalar.bin
 	./$(B)/diff_avx2   > $(B)/frames_avx2.bin
 	cmp $(B)/frames_scalar.bin $(B)/frames_avx2.bin && echo "DIFF-PANO: byte-identical"
