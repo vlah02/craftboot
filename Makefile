@@ -60,5 +60,5 @@ diff-pano: $(CORE) $(B)/display_drm.o $(B)/input_evdev.o
 	cmp $(B)/frames_scalar.bin $(B)/frames_avx2.bin && echo "DIFF-PANO: byte-identical"
 .PHONY: diff-pano
 
-clean: ; rm -rf $(B)
+clean: ; -rm -rf $(B)
 .PHONY: all dev test clean bench

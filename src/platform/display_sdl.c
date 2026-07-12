@@ -39,6 +39,33 @@ void display_flip(display_t *d) {
             exit(0);
         }
     }
+    /* CRAFTBOOT_SHOT_SEQ=dir:first:count -> after flip number `first`, dump
+     * every subsequent staging frame as dir/frame_%04d.raw (raw XRGB, no
+     * header) until `count` frames have been written, then exit. DEV-only
+     * capture hook for tools/make_demo.py; independent of CRAFTBOOT_SHOT. */
+    static int seq_flips = 0, seq_written = 0;
+    const char *seq = getenv("CRAFTBOOT_SHOT_SEQ");
+    if (seq) {
+        seq_flips++;
+        char dir[200]; int first = 0, count = 0;
+        char buf[256]; snprintf(buf, sizeof buf, "%s", seq);
+        char *p1 = strchr(buf, ':');
+        char *p2 = p1 ? strchr(p1 + 1, ':') : NULL;
+        if (p1 && p2) {
+            *p1 = 0; *p2 = 0;
+            snprintf(dir, sizeof dir, "%.199s", buf);
+            first = atoi(p1 + 1);
+            count = atoi(p2 + 1);
+        }
+        if (count > 0 && seq_flips > first && seq_written < count) {
+            char path[256];
+            snprintf(path, sizeof path, "%.200s/frame_%04d.raw", dir, seq_written % 10000);
+            FILE *f = fopen(path, "wb");
+            if (f) { fwrite(d->fb.px, 4, (size_t)d->fb.w * d->fb.h, f); fclose(f); }
+            seq_written++;
+        }
+        if (count > 0 && seq_written >= count) exit(0);
+    }
 }
 void display_close(display_t *d) { free(d->fb.px); SDL_Quit(); free(d); }
 #endif

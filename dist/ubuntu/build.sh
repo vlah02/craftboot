@@ -19,7 +19,10 @@ fi
 
 make -C "$REPO"
 
-rm -rf "$ROOT"
+if ! rm -rf "$ROOT" 2>/dev/null; then
+    echo "    [!] $ROOT has root-owned leftovers (a previous run used sudo) - retrying with sudo" >&2
+    sudo rm -rf "$ROOT" || echo "    [!] sudo rm -rf also failed; remove $ROOT manually and re-run" >&2
+fi
 mkdir -p "$ROOT"/{dev,proc,sys,mnt,assets}
 
 echo "==> app + assets + config"
