@@ -38,6 +38,11 @@ struct display {
 };
 
 static void destroy_dumb(display_t *d, int i) {
+    if (d->fb_id[i]) {
+        uint32_t id = d->fb_id[i];
+        ioctl(d->fd, DRM_IOCTL_MODE_RMFB, &id);
+        d->fb_id[i] = 0;
+    }
     if (d->map[i] && d->map[i] != MAP_FAILED) munmap(d->map[i], d->map_size[i]);
     d->map[i] = NULL;
     if (d->handle[i]) {

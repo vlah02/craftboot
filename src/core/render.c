@@ -132,6 +132,10 @@ img_t text_render(const font_t *f, const char *s, uint32_t rgb, int outline_px) 
     int w = text_width(f, s) + 2 * outline_px + 2, h = f->g[0].h + 2 * outline_px + 2;
     img_t o = { calloc((size_t)w * h, 4), w, h };
     fb_t tmp_fb = { malloc((size_t)w * h * 4), w, h };
+    if (!o.rgba || !tmp_fb.px) {          /* OOM: no splash beats a crash */
+        free(o.rgba); free(tmp_fb.px);
+        return (img_t){0};
+    }
     /* draw into an offscreen fb with sentinel bg, then convert to RGBA */
     uint32_t BG = 0x123456;
     fb_fill(&tmp_fb, BG);

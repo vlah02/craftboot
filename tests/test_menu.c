@@ -1,7 +1,12 @@
 #include "t.h"
 #include "core/menu.h"
 static config_t cfg;
-static void setup(void) { config_load(&cfg, "boot_entries.json"); }
+static void setup(void) {
+    if (config_load(&cfg, "boot_entries.json") != 0) {
+        fprintf(stderr, "config_load(\"boot_entries.json\") failed\n");
+        exit(1);
+    }
+}
 static int nav_wraps(void) {
     menustate_t m; ms_init(&m, &cfg);
     OK(m.index == 0);
