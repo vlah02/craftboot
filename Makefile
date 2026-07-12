@@ -45,5 +45,15 @@ $(B)/bench_pano: tests/bench_pano.c $(CORE)
 	./$@
 .PHONY: bench
 
+diff-pano: $(CORE)
+	@mkdir -p $(B)
+	$(CC) $(CFLAGS) -DPANO_NO_AVX2 -c src/core/render.c -o $(B)/render_scalar.o
+	$(CC) $(CFLAGS) -Itests -o $(B)/diff_scalar tests/diff_pano.c $(B)/render_scalar.o $(B)/assets.o $(B)/menu.o $(LDLIBS)
+	$(CC) $(CFLAGS) -Itests -o $(B)/diff_avx2 tests/diff_pano.c $(CORE) $(LDLIBS)
+	./$(B)/diff_scalar > $(B)/frames_scalar.bin
+	./$(B)/diff_avx2   > $(B)/frames_avx2.bin
+	cmp $(B)/frames_scalar.bin $(B)/frames_avx2.bin && echo "DIFF-PANO: byte-identical"
+.PHONY: diff-pano
+
 clean: ; rm -rf $(B)
 .PHONY: all dev test clean bench
