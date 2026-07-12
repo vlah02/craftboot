@@ -108,6 +108,7 @@ typedef struct {                     /* everything loaded once per boot */
     pano_t *pano;
     int have_pano;
     char splash_txt[120];
+    double fps;                      /* measured by menu_run; 0 until known */
 } scene_t;
 
 static int scene_load(scene_t *s, const config_t *cfg, const char *assets, int w, int h) {
@@ -184,7 +185,10 @@ static void draw_scene(fb_t *fb, scene_t *s, menustate_t *m, double t, double ya
                          cx - tw / 2, by + (bh - s->button.g[0].h) / 2, col, C_SHADOW);
     }
     /* footer */
-    draw_text_shadow(fb, &s->small, "Craftboot 2.0", 8, 6, C_WHITE, C_SHADOW);
+    char ver[48];
+    if (s->fps > 0) snprintf(ver, sizeof ver, "Craftboot 2.0  %.0f fps", s->fps);
+    else            snprintf(ver, sizeof ver, "Craftboot 2.0");
+    draw_text_shadow(fb, &s->small, ver, 8, 6, C_WHITE, C_SHADOW);
     draw_text_shadow(fb, &s->small, "Up/Down + Enter  -  Esc to go back",
                      8, h - s->small.g[0].h - 6, C_WHITE, C_SHADOW);
     if (m->countdown >= 0) {
@@ -250,7 +254,8 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
         display_flip(d);
         frames++;
         if (t - tstat >= 5.0) {
-            fprintf(stderr, "[craftboot] fps: %.1f\n", frames / (t - tstat));
+            s.fps = frames / (t - tstat);
+            fprintf(stderr, "[craftboot] fps: %.1f\n", s.fps);
             frames = 0; tstat = t;
         }
     }
