@@ -34,4 +34,12 @@ static int renders_to_img(void) {
     img_free(&t);
     return 0;
 }
-int main(void) { RUN(load_and_measure); RUN(draws_pixels); RUN(renders_to_img); return 0; }
+static int escaped_glyphs_distinct(void) {
+    font_t f;
+    OK(font_load(&f, "assets/fonts/baked/small.png", "assets/fonts/baked/small.json") == 0);
+    OK(f.g['"' - 32].adv > 0);                    /* quote glyph exists */
+    OK(f.g['\\' - 32].adv > 0);                   /* backslash glyph exists */
+    OK(text_width(&f, "\"") > 0);
+    return 0;
+}
+int main(void) { RUN(load_and_measure); RUN(draws_pixels); RUN(renders_to_img); RUN(escaped_glyphs_distinct); return 0; }

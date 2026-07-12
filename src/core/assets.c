@@ -109,6 +109,8 @@ int font_load(font_t *f, const char *png_path, const char *json_path) {
             int go = i + 1, gi = go + 1;
             for (int g = 0; g < t[go].size; g++) {
                 unsigned char ch = (unsigned char)js[t[gi].start];
+                if (ch == '\\' && t[gi].end - t[gi].start >= 2)   /* escaped key: \" or \\ */
+                    ch = (unsigned char)js[t[gi].start + 1];
                 glyph_t *gl = (ch >= 32 && ch < 127) ? &f->g[ch - 32] : NULL;
                 int obj = gi + 1, fi = obj + 1;
                 for (int q = 0; q < t[obj].size; q++) {
