@@ -9,6 +9,7 @@ static char *slurp(const char *path, long *n) {
     FILE *f = fopen(path, "rb"); if (!f) return NULL;
     fseek(f, 0, SEEK_END); *n = ftell(f); fseek(f, 0, SEEK_SET);
     char *b = malloc(*n + 1);
+    if (!b) { fclose(f); return NULL; }
     if (fread(b, 1, *n, f) != (size_t)*n) { fclose(f); free(b); return NULL; }
     b[*n] = 0; fclose(f); return b;
 }
@@ -99,11 +100,12 @@ int font_load(font_t *f, const char *png_path, const char *json_path) {
     memset(f, 0, sizeof *f);
     f->atlas = img_load(png_path);
     if (!f->atlas.rgba) return -1;
-    long n; char *js = slurp(json_path, &n); if (!js) return -1;
+    long n; char *js = slurp(json_path, &n);
+    if (!js) { img_free(&f->atlas); return -1; }
     jsmn_parser p; jsmn_init(&p);
     static jsmntok_t t[2048];
     int nt = jsmn_parse(&p, js, n, t, 2048);
-    if (nt < 1) { free(js); return -1; }
+    if (nt < 1) { free(js); img_free(&f->atlas); return -1; }
     int i = 1;
     for (int k = 0; k < t[0].size; k++) {
         if (teq(js, &t[i], "size")) f->size = atoi(js + t[i + 1].start);
@@ -132,5 +134,6 @@ int font_load(font_t *f, const char *png_path, const char *json_path) {
         i = skip(t, nt, i + 1);
     }
     free(js);
-    return f->size ? 0 : -1;
+    if (!f->size) { img_free(&f->atlas); return -1; }
+    return 0;
 }

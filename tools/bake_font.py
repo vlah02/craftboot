@@ -26,6 +26,6 @@ for name, px in SIZES.items():
         glyphs[ch] = {"x": cx - pad, "y": cy - pad, "w": cell_w, "h": cell_h,
                       "adv": int(font.getlength(ch))}
     atlas.save(f"{OUT}/{name}.png")
-    json.dump({"size": px, "cell_h": cell_h, "glyphs": glyphs},
-              open(f"{OUT}/{name}.json", "w"))
+    with open(f"{OUT}/{name}.json", "w") as jf:
+        json.dump({"size": px, "cell_h": cell_h, "glyphs": glyphs}, jf)
     print(f"{OUT}/{name}.png  {atlas.size}")

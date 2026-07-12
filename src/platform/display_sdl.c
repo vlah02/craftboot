@@ -10,6 +10,7 @@ display_t *display_open(int w, int h) {
     display_t *d = calloc(1, sizeof *d);
     d->win = SDL_CreateWindow("craftboot", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               w, h, 0);
+    if (!d->win) { SDL_Quit(); free(d); return NULL; }
     d->ren = SDL_CreateRenderer(d->win, -1, SDL_RENDERER_PRESENTVSYNC);
     if (d->ren)
         d->tex = SDL_CreateTexture(d->ren, SDL_PIXELFORMAT_XRGB8888,
@@ -19,7 +20,7 @@ display_t *display_open(int w, int h) {
 }
 fb_t *display_fb(display_t *d) { return &d->fb; }
 void display_flip(display_t *d) {
-    if (d->ren) {
+    if (d->ren && d->tex) {
         SDL_UpdateTexture(d->tex, NULL, d->fb.px, d->fb.w * 4);
         SDL_RenderCopy(d->ren, d->tex, NULL, NULL);
         SDL_RenderPresent(d->ren);
@@ -67,5 +68,13 @@ void display_flip(display_t *d) {
         if (count > 0 && seq_written >= count) exit(0);
     }
 }
-void display_close(display_t *d) { free(d->fb.px); SDL_Quit(); free(d); }
+void display_close(display_t *d) {
+    if (!d) return;
+    if (d->tex) SDL_DestroyTexture(d->tex);
+    if (d->ren) SDL_DestroyRenderer(d->ren);
+    if (d->win) SDL_DestroyWindow(d->win);
+    SDL_Quit();
+    free(d->fb.px);
+    free(d);
+}
 #endif
