@@ -12,7 +12,7 @@ const entry_t *ms_entries(const menustate_t *m, int *n) {
 }
 void ms_move(menustate_t *m, int d) {
     int n; ms_entries(m, &n);
-    m->index = (m->index + d + n) % n;
+    m->index = ((m->index + d) % n + n) % n;
 }
 const entry_t *ms_select(menustate_t *m) {
     int n; const entry_t *e = &ms_entries(m, &n)[m->index];
@@ -25,7 +25,11 @@ int ms_back(menustate_t *m) {
     if (m->level > 0) { m->level = 0; m->index = 0; return 1; }
     return 0;
 }
-void ms_tick(menustate_t *m, double dt) { if (m->countdown >= 0) m->countdown -= dt; }
+void ms_tick(menustate_t *m, double dt) {
+    if (m->countdown < 0) return;             /* cancelled: stays cancelled */
+    m->countdown -= dt;
+    if (m->countdown < 0) m->countdown = 0;   /* expired: clamps to exactly 0 */
+}
 void ms_cancel_autoboot(menustate_t *m) { m->countdown = -1; }
 static int bootable(const entry_t *e) { return e->type == E_WINDOWS || e->type == E_KEXEC; }
 const entry_t *ms_default_entry(const menustate_t *m) {

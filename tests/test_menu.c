@@ -38,5 +38,28 @@ static int countdown_and_default(void) {
     OK(d->type == E_WINDOWS);                     /* index 0 is bootable */
     return 0;
 }
+static int move_large_delta_safe(void) {
+    menustate_t m; ms_init(&m, &cfg);
+    ms_move(&m, -5);                 /* n=3: ((0-5)%3+3)%3 = 1 */
+    OK(m.index == 1);
+    ms_move(&m, 300);                /* 300 % 3 = 0 -> stays 1 */
+    OK(m.index == 1);
+    ms_move(&m, -300);
+    OK(m.index == 1);
+    return 0;
+}
+static int countdown_expiry_clamps_to_zero(void) {
+    menustate_t m; ms_init(&m, &cfg);
+    ms_tick(&m, 20.0);               /* overshoot expiry */
+    OK(m.countdown == 0.0);          /* clamped, not negative */
+    ms_tick(&m, 1.0);
+    OK(m.countdown == 0.0);          /* stays expired */
+    ms_cancel_autoboot(&m);
+    OK(m.countdown < 0);             /* cancelled distinct from expired */
+    ms_tick(&m, 1.0);
+    OK(m.countdown < 0);             /* cancel is sticky */
+    return 0;
+}
 int main(void) { setup(); RUN(nav_wraps); RUN(submenu_and_back);
-                 RUN(select_returns_bootable); RUN(countdown_and_default); return 0; }
+                 RUN(select_returns_bootable); RUN(countdown_and_default);
+                 RUN(move_large_delta_safe); RUN(countdown_expiry_clamps_to_zero); return 0; }
