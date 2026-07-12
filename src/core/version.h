@@ -1,2 +1,2 @@
 #pragma once
-#define CRAFTBOOT_VERSION "2.0-c"
+#define CRAFTBOOT_VERSION "2.1"

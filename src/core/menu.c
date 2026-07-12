@@ -1,4 +1,5 @@
 #include "core/menu.h"
+#include "core/version.h"
 #include <string.h>
 
 void ms_init(menustate_t *m, const config_t *cfg) {
@@ -188,8 +189,8 @@ static void draw_scene(fb_t *fb, scene_t *s, menustate_t *m, double t, double ya
     }
     /* footer */
     char ver[48];
-    if (s->fps > 0) snprintf(ver, sizeof ver, "Craftboot 2.0  %.0f fps", s->fps);
-    else            snprintf(ver, sizeof ver, "Craftboot 2.0");
+    if (s->fps > 0) snprintf(ver, sizeof ver, "Craftboot " CRAFTBOOT_VERSION "  %.0f fps", s->fps);
+    else            snprintf(ver, sizeof ver, "Craftboot " CRAFTBOOT_VERSION);
     draw_text_shadow(fb, &s->small, ver, 8, 6, C_WHITE, C_SHADOW);
     draw_text_shadow(fb, &s->small, "Up/Down + Enter  -  Esc to go back",
                      8, h - s->small.g[0].h - 6, C_WHITE, C_SHADOW);
