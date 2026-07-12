@@ -13,10 +13,13 @@ const entry_t *ms_entries(const menustate_t *m, int *n) {
 }
 void ms_move(menustate_t *m, int d) {
     int n; ms_entries(m, &n);
+    if (n <= 0) return;
     m->index = ((m->index + d) % n + n) % n;
 }
 const entry_t *ms_select(menustate_t *m) {
-    int n; const entry_t *e = &ms_entries(m, &n)[m->index];
+    int n; const entry_t *es = ms_entries(m, &n);
+    if (n <= 0) return NULL;
+    const entry_t *e = &es[m->index];
     if (e->type == E_SUBMENU) { m->level = 1; m->index = 0; return NULL; }
     if (e->type == E_BACK)    { m->level = 0; m->index = 0; return NULL; }
     if (e->type == E_INFO)    return NULL;

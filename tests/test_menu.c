@@ -68,7 +68,22 @@ static int countdown_expiry_clamps_to_zero(void) {
     OK(m.countdown < 0);             /* cancel is sticky */
     return 0;
 }
+static int empty_menu_safe(void) {
+    config_t empty = {0};
+    strcpy(empty.root_uuid, "c36a4c56-487b-4aee-946b-f7fa2dc7f001");
+    empty.nmenu[0] = 1;
+    empty.menu[0][0] = (entry_t){ .type = E_SUBMENU };
+    strcpy(empty.menu[0][0].label, "Extras");
+    strcpy(empty.menu[0][0].target, "extras");   /* extras: nmenu[1]==0 */
+    menustate_t m; ms_init(&m, &empty);
+    OK(ms_select(&m) == NULL);        /* enters empty submenu */
+    ms_move(&m, 1);                   /* must not SIGFPE */
+    OK(ms_select(&m) == NULL);        /* must not index OOB */
+    OK(ms_back(&m) == 1);             /* can still leave */
+    return 0;
+}
 int main(void) { setup(); RUN(nav_wraps); RUN(submenu_and_back);
                  RUN(select_returns_bootable); RUN(bootnext_is_default_bootable);
                  RUN(countdown_and_default);
-                 RUN(move_large_delta_safe); RUN(countdown_expiry_clamps_to_zero); return 0; }
+                 RUN(move_large_delta_safe); RUN(countdown_expiry_clamps_to_zero);
+                 RUN(empty_menu_safe); return 0; }
