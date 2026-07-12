@@ -188,7 +188,7 @@ static void draw_scene(fb_t *fb, scene_t *s, menustate_t *m, double t, double ya
                          cx - tw / 2, by + (bh - s->button.g[0].h) / 2, col, C_SHADOW);
     }
     /* footer */
-    char ver[48];
+    char ver[64];                    /* room for "Craftboot v2.1-12-gabc1234-dirty  144 fps" */
     if (s->fps > 0) snprintf(ver, sizeof ver, "Craftboot " CRAFTBOOT_VERSION "  %.0f fps", s->fps);
     else            snprintf(ver, sizeof ver, "Craftboot " CRAFTBOOT_VERSION);
     draw_text_shadow(fb, &s->small, ver, 8, 6, C_WHITE, C_SHADOW);

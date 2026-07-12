@@ -6,6 +6,8 @@ EXTRA   := -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu
 endif
 CFLAGS  ?= -O3 -march=x86-64-v3 -std=c11 -Wall -Wextra
 CFLAGS  += -Isrc -Isrc/vendor -I/usr/include/libdrm $(EXTRA) -D_GNU_SOURCE
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo v2.1)
+CFLAGS  += -DCRAFTBOOT_VERSION_GIT=\"$(VERSION)\"
 LDLIBS  := -lpthread -lm
 B       := build
 
