@@ -64,6 +64,7 @@ int efi_load_option_description(const unsigned char *v, size_t n,
         if (b + 1 >= left) return -1;      /* no NUL before the buffer ends */
         unsigned char lo = d[b], hi = d[b + 1];
         if (lo == 0 && hi == 0) break;
+        if (hi != 0) return -1;  /* non-ASCII UCS-2: cannot match our ASCII names */
         if (i + 1 >= cap) return -1;       /* description would overflow out[] */
         out[i] = (char)lo;
         i++;

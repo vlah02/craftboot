@@ -22,6 +22,7 @@ static int is_keyboard(int fd) {
 input_t *input_open(display_t *d) {
     (void)d;
     input_t *in = calloc(1, sizeof *in);
+    if (!in) return NULL;
     DIR *dir = opendir("/dev/input");
     if (!dir) return in;
     struct dirent *e;
@@ -37,6 +38,7 @@ input_t *input_open(display_t *d) {
     return in;
 }
 action_t input_poll(input_t *in) {
+    if (!in) return ACT_NONE;
     struct input_event ev;
     for (int i = 0; i < in->n; i++) {
         while (read(in->fd[i], &ev, sizeof ev) == sizeof ev) {
@@ -51,5 +53,9 @@ action_t input_poll(input_t *in) {
     }
     return ACT_NONE;
 }
-void input_close(input_t *in) { for (int i = 0; i < in->n; i++) close(in->fd[i]); free(in); }
+void input_close(input_t *in) {
+    if (!in) return;
+    for (int i = 0; i < in->n; i++) close(in->fd[i]);
+    free(in);
+}
 #endif

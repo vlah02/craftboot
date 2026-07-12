@@ -6,16 +6,26 @@
 #include <string.h>
 struct display { SDL_Window *win; SDL_Renderer *ren; SDL_Texture *tex; fb_t fb; };
 display_t *display_open(int w, int h) {
-    SDL_Init(SDL_INIT_VIDEO);
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) return NULL;
     display_t *d = calloc(1, sizeof *d);
+    if (!d) { SDL_Quit(); return NULL; }
     d->win = SDL_CreateWindow("craftboot", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               w, h, 0);
     if (!d->win) { SDL_Quit(); free(d); return NULL; }
+    /* NULL ren/tex tolerated: SDL dummy driver (headless capture) has no renderer */
     d->ren = SDL_CreateRenderer(d->win, -1, SDL_RENDERER_PRESENTVSYNC);
     if (d->ren)
         d->tex = SDL_CreateTexture(d->ren, SDL_PIXELFORMAT_XRGB8888,
                                    SDL_TEXTUREACCESS_STREAMING, w, h);
     d->fb = (fb_t){ malloc((size_t)w * h * 4), w, h };
+    if (!d->fb.px) {
+        if (d->tex) SDL_DestroyTexture(d->tex);
+        if (d->ren) SDL_DestroyRenderer(d->ren);
+        SDL_DestroyWindow(d->win);
+        SDL_Quit();
+        free(d);
+        return NULL;
+    }
     return d;
 }
 fb_t *display_fb(display_t *d) { return &d->fb; }

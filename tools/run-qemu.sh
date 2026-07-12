@@ -13,11 +13,14 @@ B="$HERE/../build"
 [[ -f "$B/vmlinuz" ]] || { echo "No kernel staged. Run: sudo cp /boot/vmlinuz-$(uname -r) '$B/vmlinuz' && sudo chmod +r '$B/vmlinuz'"; exit 1; }
 [[ -f "$B/craftboot.initrd" ]] || { echo "No initramfs (run dist/ubuntu/build.sh)"; exit 1; }
 
-# test root disk with the config's UUID so the ext4 probe finds it
-UUID="$(python3 -c "import json;print(json.load(open('$HERE/../boot_entries.json'))['root_uuid'])")"
-if [[ ! -f "$B/testroot.img" ]]; then
+# test root disk with the config's UUID so the ext4 probe finds it;
+# regenerate if the existing image's UUID no longer matches the config
+UUID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["root_uuid"])' "$HERE/../boot_entries.json")"
+CUR=""
+[[ -f "$B/testroot.img" ]] && CUR=$(dumpe2fs -h "$B/testroot.img" 2>/dev/null | awk -F': *' '/Filesystem UUID/{print $2}')
+if [[ "$CUR" != "$UUID" ]]; then
     dd if=/dev/zero of="$B/testroot.img" bs=1M count=64 status=none
-    mkfs.ext4 -q -U "$UUID" "$B/testroot.img"
+    mkfs.ext4 -q -F -U "$UUID" "$B/testroot.img"
 fi
 
 cp -f /usr/share/OVMF/OVMF_VARS_4M.fd "$B/OVMF_VARS.fd"

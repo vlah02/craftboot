@@ -43,6 +43,17 @@ static int load_option_rejects_too_small_output(void) {
     return 0;
 }
 
+static int load_option_rejects_non_ascii(void) {
+    /* description contains a non-ASCII UCS-2 unit (0x0401); decoding just the
+     * low byte would silently corrupt the name -- must fail closed */
+    unsigned char v[4 + 4 + 2 + 6] = {0};
+    v[10] = 'W'; v[11] = 0;
+    v[12] = 0x01; v[13] = 0x04;   /* U+0401, hi byte nonzero */
+    char out[16];
+    OK(efi_load_option_description(v, sizeof v, out, sizeof out) == -1);
+    return 0;
+}
+
 static int bootnum_from_name(void) {
     unsigned num = 0;
     OK(efi_bootnum_from_name(
@@ -63,6 +74,7 @@ int main(void) {
     RUN(load_option_rejects_short_buffer);
     RUN(load_option_rejects_unterminated_description);
     RUN(load_option_rejects_too_small_output);
+    RUN(load_option_rejects_non_ascii);
     RUN(bootnum_from_name);
     return 0;
 }
