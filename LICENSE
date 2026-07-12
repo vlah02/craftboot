@@ -23,9 +23,9 @@ SOFTWARE.
 ---
 
 NOTE: This MIT license covers only the ORIGINAL CODE in this repository
-(app/*.py, boot/*.sh, scripts/*.py, and the build/setup tooling). The bundled
-Minecraft assets (fonts, textures, button sprites, panoramas, and logos under
-app/assets/) are the property of Mojang Studios / Microsoft and/or their
-respective resource-pack authors and are NOT licensed under MIT. Minecraft is a
-trademark of Mojang Studios; this project is unofficial and not affiliated with
-Mojang or Microsoft. See the "Credits & citations" section of README.md.
+(src/, dist/, tools/, tests/, and the Makefile). The bundled Minecraft assets
+(fonts, textures, button sprites, panoramas, and logos under assets/) are the
+property of Mojang Studios / Microsoft and/or their respective resource-pack
+authors and are NOT licensed under MIT. Minecraft is a trademark of Mojang
+Studios; this project is unofficial and not affiliated with Mojang or
+Microsoft. See the "Credits & citations" section of README.md.

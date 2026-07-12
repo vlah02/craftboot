@@ -50,6 +50,7 @@ loading animation, and a 15-second auto-boot countdown.
 - [Development loop (QEMU)](#development-loop-qemu)
 - [Versioning](#versioning)
 - [Recovery & fallback](#recovery--fallback)
+- [Contributing: code](#contributing-code)
 - [Contributing: new panoramas](#contributing-new-panoramas)
 - [Contributing: new logos](#contributing-new-logos)
 - [Panorama tunables](#panorama-tunables)
@@ -391,6 +392,25 @@ See [CHANGELOG.md](CHANGELOG.md) for what shipped in each tag.
 
 ---
 
+## Contributing: code
+
+```bash
+make            # ship binary   -> build/craftboot (static, DRM/evdev)
+make dev        # desktop preview -> build/craftboot-dev (SDL2 window)
+make test       # unit tests (tests/, t.h harness) -> "ALL TESTS PASS"
+make bench      # panorama render benchmark
+make diff-pano  # scalar-vs-AVX2 byte-identical differential test
+```
+
+Builds are `-Wall -Wextra` clean — treat any new compiler warning as a bug to
+fix before sending a PR. Distro-specific boot-chain code (initramfs builder,
+signing/enrollment scripts) goes under `dist/<distro>/`, alongside the
+existing `dist/ubuntu/` — see
+[Porting to another distro](#porting-to-another-distro); `src/` itself stays
+distro-agnostic.
+
+---
+
 ## Contributing: new panoramas
 
 Panoramas live in `assets/panoramas/` as equirectangular JPEGs (q90), **named by
@@ -528,10 +548,15 @@ This is a **fan project** built on Mojang's Minecraft assets.
   personal use.
 - **Logos** (`assets/logos/`) are per-update Minecraft wordmarks, created with
   the **EaseCation 3D Text generator** ([3dtext.easecation.net](https://3dtext.easecation.net/)).
+- **Vendored libraries:** [`stb_image.h`](https://github.com/nothings/stb) by
+  Sean Barrett (public domain / MIT) for JPEG/PNG decoding, and
+  [`jsmn.h`](https://github.com/zserge/jsmn) by Serge Zaitsev (MIT) for parsing
+  `boot_entries.json` — both vendored, single-header, under `src/vendor/`
+  (see [`src/vendor/README.md`](src/vendor/README.md)).
 
 ## License & trademark
 
-The **code** in this repository (`src/*.c`/`*.h`, `dist/*/*.sh`, `tools/*.py`)
+The **code** in this repository (`src/`, `dist/`, `tools/`, `tests/`, `Makefile`)
 is released under the **MIT License** — do what you like with it.
 
 The **bundled assets are NOT covered by that license**: Minecraft, its fonts,
