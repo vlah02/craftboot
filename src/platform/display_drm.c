@@ -193,15 +193,13 @@ found:
         return NULL;
     }
 
-    /* probe page flip once */
-    struct drm_mode_crtc_page_flip pf = { .crtc_id = d->crtc_id, .fb_id = d->fb_id[0],
-                                          .flags = DRM_MODE_PAGE_FLIP_EVENT };
-    d->can_flip = ioctl(d->fd, DRM_IOCTL_MODE_PAGE_FLIP, &pf) == 0;
-    if (d->can_flip) {                 /* drain the probe event */
-        char buf[256]; ssize_t n = read(d->fd, buf, sizeof buf); (void)n;
-    }
-    fprintf(stderr, "[craftboot] drm: %ux%u flip=%d\n",
-            d->mode.hdisplay, d->mode.vdisplay, d->can_flip);
+    /* Prefer page flips; if PAGE_FLIP fails at runtime (e.g. some
+     * simpledrm/QEMU), display_flip() falls back to DirtyFB permanently.
+     * (A boot-time probe against the displayed FB gave false negatives on
+     * drivers that reject same-FB flips.) */
+    d->can_flip = 1;
+    fprintf(stderr, "[craftboot] drm: %ux%u (flips: runtime-probe)\n",
+            d->mode.hdisplay, d->mode.vdisplay);
     return d;
 }
 

@@ -64,6 +64,7 @@ static double now_s(void) {
     return t.tv_sec + t.tv_nsec / 1e9;
 }
 static unsigned rnd(unsigned n) {          /* uniform-ish 0..n-1 via getrandom */
+    if (n == 0) return 0;
     unsigned r; if (getrandom(&r, sizeof r, 0) < 0) r = 0; return r % n;
 }
 static int __attribute__((noipa)) pick_random_file(const char *dir, const char *ext, char *out, size_t cap) {
