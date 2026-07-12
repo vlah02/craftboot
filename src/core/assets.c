@@ -78,3 +78,17 @@ int config_load(config_t *c, const char *path) {
     free(js);
     return c->nmenu[0] ? 0 : -1;
 }
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_PNG
+#define STBI_NO_THREAD_LOCALS
+#include "stb_image.h"
+#include "core/render.h"
+
+img_t img_load(const char *path) {
+    img_t o = {0}; int n;
+    o.rgba = stbi_load(path, &o.w, &o.h, &n, 4);
+    return o;
+}
+void img_free(img_t *s) { free(s->rgba); s->rgba = 0; }

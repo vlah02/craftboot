@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include "core/render.h"
 
 typedef enum { E_WINDOWS, E_KEXEC, E_SUBMENU, E_INFO, E_UEFI, E_BACK } etype_t;
 typedef struct {
@@ -14,3 +15,5 @@ typedef struct {
     int   nmenu[2];
 } config_t;
 int config_load(config_t *c, const char *path);
+img_t img_load(const char *path);
+void  img_free(img_t *s);
