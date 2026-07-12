@@ -57,8 +57,26 @@ static int loads_repo_png(void) {
     img_free(&j);
     return 0;
 }
+static int nineslice_narrow_sprite_safe(void) {
+    static uint32_t big[64 * 64];
+    fb_t f = { big, 64, 64 };
+    fb_fill(&f, 0);
+    uint8_t px[4 * 2 * 8];                    /* 2 wide, 8 tall: w < 2*h */
+    for (int i = 0; i < 2 * 8; i++) { px[i*4]=200; px[i*4+1]=10; px[i*4+2]=10; px[i*4+3]=255; }
+    img_t s = { px, 2, 8 };
+    blit_9slice(&f, &s, 4, 4, 30, 12);        /* must not crash */
+    OK(big[8 * 64 + 8] != 0);                 /* drew something inside the rect */
+    /* normal case still works: 200x20-like wide sprite */
+    static uint8_t wide[4 * 40 * 8];
+    for (int i = 0; i < 40 * 8; i++) { wide[i*4]=10; wide[i*4+1]=200; wide[i*4+2]=10; wide[i*4+3]=255; }
+    img_t s2 = { wide, 40, 8 };
+    blit_9slice(&f, &s2, 0, 40, 50, 16);
+    OK((big[48 * 64 + 25] >> 8 & 0xff) > 100);
+    return 0;
+}
 int main(void) {
     RUN(mix_endpoints); RUN(fill_and_rect); RUN(alpha_blit);
     RUN(scale_solid_stays_solid); RUN(rotate_keeps_content); RUN(loads_repo_png);
+    RUN(nineslice_narrow_sprite_safe);
     return 0;
 }

@@ -28,8 +28,10 @@ void blit(fb_t *f, const img_t *s, int x, int y) {
             put_rgba(f, x + i, y + j, &s->rgba[((long)j * s->w + i) * 4]);
 }
 static void sample_bilinear(const img_t *s, float u, float v, uint8_t out[4]) {
-    if (u < 0) u = 0; if (v < 0) v = 0;
-    if (u > s->w - 1) u = (float)s->w - 1; if (v > s->h - 1) v = (float)s->h - 1;
+    if (u < 0) u = 0;
+    if (v < 0) v = 0;
+    if (u > s->w - 1) u = (float)s->w - 1;
+    if (v > s->h - 1) v = (float)s->h - 1;
     int x0 = (int)u, y0 = (int)v;
     int x1 = x0 + 1 < s->w ? x0 + 1 : x0, y1 = y0 + 1 < s->h ? y0 + 1 : y0;
     float fu = u - x0, fv = v - y0;
@@ -71,8 +73,12 @@ img_t img_rotated(const img_t *s, float deg) {
 }
 void blit_9slice(fb_t *f, const img_t *s, int x, int y, int w, int h) {
     int cap_src = s->h;                       /* square caps, like the Python 9-slice */
+    if (s->w < 2 * cap_src + 1 || w < 2) {    /* too narrow to 9-slice: plain stretch */
+        blit_scaled(f, s, x, y, w, h);
+        return;
+    }
     int cap = (int)((float)cap_src * h / s->h);
-    img_t L = { s->rgba, cap_src, s->h };     /* views via offset copies */
+    if (2 * cap > w) cap = w / 2;
     /* build sub-images by copy (simple + safe) */
     img_t left = { malloc((size_t)cap_src * s->h * 4), cap_src, s->h };
     img_t mid  = { malloc((size_t)(s->w - 2 * cap_src) * s->h * 4), s->w - 2 * cap_src, s->h };
@@ -82,7 +88,6 @@ void blit_9slice(fb_t *f, const img_t *s, int x, int y, int w, int h) {
         memcpy(&mid.rgba[(long)j*mid.w*4],    &s->rgba[((long)j*s->w+cap_src)*4],         (size_t)mid.w*4);
         memcpy(&right.rgba[(long)j*right.w*4],&s->rgba[((long)j*s->w+s->w-cap_src)*4],    (size_t)right.w*4);
     }
-    (void)L;
     blit_scaled(f, &left, x, y, cap, h);
     blit_scaled(f, &mid, x + cap, y, w - 2 * cap, h);
     blit_scaled(f, &right, x + w - cap, y, cap, h);
