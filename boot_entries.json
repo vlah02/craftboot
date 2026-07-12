@@ -1,5 +1,5 @@
 {
-  "_comment": "Boot entries for craftboot. Values mirror the working GRUB blocks. Handoff is NOT wired up in Milestone 1 (selecting only plays the loading animation and prints the intended action).",
+  "_comment": "Boot entries for craftboot. type: windows|bootnext (match = firmware entry description) | kexec (kernel/initrd/cmdline, used for recovery) | submenu|info|uefi|back. Dry-run unless running as PID 1.",
   "root_uuid": "c36a4c56-487b-4aee-946b-f7fa2dc7f001",
   "windows_efi_uuid": "34C5-41C8",
   "menus": {

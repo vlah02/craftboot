@@ -299,7 +299,7 @@ sudo ./dist/ubuntu/uki-setup.sh --uninstall  # removes the entry, ESP files, and
 Fastest inner loop — no VM, no root, a real SDL window:
 
 ```bash
-make dev && ./build/craftboot-dev --windowed
+make dev && ./build/craftboot-dev          # dry-run by default; --live / --dry / --assets <dir>
 ```
 
 Full loop through the actual initramfs + kernel, in a QEMU window:
