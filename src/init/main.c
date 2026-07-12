@@ -23,6 +23,7 @@ static void msleep(int ms) { struct timespec t = { ms / 1000, (ms % 1000) * 1000
  * release image /bin/sh doesn't exist, so this is a no-op and we fall
  * through to the reboot. */
 static void fail_stop(void) {
+    sync();                     /* all-exits contract: flush before any reboot */
     if (access("/bin/sh", X_OK) == 0)
         execl("/bin/sh", "sh", NULL);
     reboot(RB_AUTOBOOT);
