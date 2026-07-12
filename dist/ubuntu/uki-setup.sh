@@ -2,16 +2,16 @@
 # Make craftboot its own firmware EFI boot entry (reorderable in the UEFI BIOS),
 # Secure-Boot-compatible via shim + a MOK-signed UKI.
 #
-#   sudo ./boot/uki-setup.sh genkey     generate a signing key + start MOK enrollment
+#   sudo ./dist/ubuntu/uki-setup.sh genkey     generate a signing key + start MOK enrollment
 #   (reboot, choose "Enroll MOK" at the blue screen, enter the password, reboot)
-#   sudo ./boot/uki-setup.sh install    build+sign the UKI, add the firmware entry + hook
-#   sudo ./boot/uki-setup.sh --uninstall  remove the firmware entry + ESP files + hook
+#   sudo ./dist/ubuntu/uki-setup.sh install    build+sign the UKI, add the firmware entry + hook
+#   sudo ./dist/ubuntu/uki-setup.sh --uninstall  remove the firmware entry + ESP files + hook
 #
 # Additive & safe: your existing GRUB/Ubuntu entry stays; if craftboot's entry
 # fails, the firmware falls through to it (or reorder in BIOS).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO="$(cd "$HERE/.." && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
 KEYDIR="/var/lib/craftboot"
 ESPDIR="/boot/efi/EFI/craftboot"
 UBUNTU_ESP="/boot/efi/EFI/ubuntu"
@@ -70,7 +70,7 @@ install() {
     cat > "$HOOK" <<EOF
 #!/bin/sh
 ver="\$1"; [ -n "\$ver" ] || exit 0
-if "$REPO/boot/build.sh" "\$ver" >/dev/null 2>&1 && "$REPO/boot/uki-build.sh" "\$ver" >/dev/null 2>&1; then
+if "$REPO/dist/ubuntu/build.sh" "\$ver" >/dev/null 2>&1 && "$REPO/dist/ubuntu/uki-build.sh" "\$ver" >/dev/null 2>&1; then
     :
 else echo "craftboot: UKI rebuild failed for \$ver (boot Ubuntu and rebuild)" >&2; fi
 exit 0

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Rebuild the initramfs AND the signed UKI on the ESP after editing the app.
-# Run this whenever you change anything under app/, then reboot into craftboot.
-#   sudo ./boot/rebuild.sh
+# Run this whenever you change anything under src/, then reboot into craftboot.
+#   sudo ./dist/ubuntu/rebuild.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 [[ $EUID -eq 0 ]] || { echo "Please run with sudo."; exit 1; }

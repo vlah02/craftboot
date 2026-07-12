@@ -229,6 +229,7 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
     }
     menustate_t m; ms_init(&m, cfg);
     double t0 = now_s(), tprev = t0;
+    long frames = 0; double tstat = t0;
     const entry_t *chosen = NULL;
     while (!chosen) {
         double t = now_s(), dt = t - tprev; tprev = t;
@@ -247,6 +248,11 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
         double yaw = 0.7 + (t - t0) / 140.0;          /* PANO_START + t/PANO_LOOP */
         draw_scene(fb, &s, &m, t, yaw);
         display_flip(d);
+        frames++;
+        if (t - tstat >= 5.0) {
+            fprintf(stderr, "[craftboot] fps: %.1f\n", frames / (t - tstat));
+            frames = 0; tstat = t;
+        }
     }
     /* loading animation ~2.5 s */
     double ls = now_s();

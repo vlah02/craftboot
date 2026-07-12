@@ -5,7 +5,7 @@
 # (shim's second-stage name), signed with the MOK key from uki-setup.sh genkey.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-B="$HERE/build"
+B="$HERE/../../build"
 KEYDIR="/var/lib/craftboot"
 ESPDIR="/boot/efi/EFI/craftboot"
 CMDLINE="console=tty1 quiet loglevel=3 vt.global_cursor_default=0"
