@@ -17,3 +17,4 @@ typedef struct {
 int config_load(config_t *c, const char *path);
 img_t img_load(const char *path);
 void  img_free(img_t *s);
+int font_load(font_t *f, const char *png_path, const char *json_path);

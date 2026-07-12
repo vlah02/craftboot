@@ -93,3 +93,55 @@ void blit_9slice(fb_t *f, const img_t *s, int x, int y, int w, int h) {
     blit_scaled(f, &right, x + w - cap, y, cap, h);
     free(left.rgba); free(mid.rgba); free(right.rgba);
 }
+
+static void draw_glyph(fb_t *fb, const font_t *f, const glyph_t *g,
+                       int x, int y, uint32_t rgb) {
+    for (int j = 0; j < g->h; j++)
+        for (int i = 0; i < g->w; i++) {
+            const uint8_t *p = &f->atlas.rgba[(((long)g->y + j) * f->atlas.w + g->x + i) * 4];
+            if (!p[3]) continue;
+            uint8_t px[4] = { (uint8_t)(rgb >> 16), (uint8_t)(rgb >> 8), (uint8_t)rgb, p[3] };
+            put_rgba(fb, x + i, y + j, px);
+        }
+}
+int text_width(const font_t *f, const char *s) {
+    int w = 0;
+    for (; *s; s++) if (*s >= 32 && *s < 127) w += f->g[*s - 32].adv;
+    return w;
+}
+void draw_text(fb_t *fb, const font_t *f, const char *s, int x, int y, uint32_t rgb) {
+    for (; *s; s++) {
+        if (*s < 32 || *s >= 127) continue;
+        const glyph_t *g = &f->g[*s - 32];
+        draw_glyph(fb, f, g, x, y, rgb);
+        x += g->adv;
+    }
+}
+void draw_text_shadow(fb_t *fb, const font_t *f, const char *s, int x, int y,
+                      uint32_t rgb, uint32_t shadow) {
+    int off = f->size >= 40 ? 3 : 2;
+    draw_text(fb, f, s, x + off, y + off, shadow);
+    draw_text(fb, f, s, x, y, rgb);
+}
+img_t text_render(const font_t *f, const char *s, uint32_t rgb, int outline_px) {
+    int w = text_width(f, s) + 2 * outline_px + 2, h = f->g[0].h + 2 * outline_px + 2;
+    img_t o = { calloc((size_t)w * h, 4), w, h };
+    fb_t tmp_fb = { malloc((size_t)w * h * 4), w, h };
+    /* draw into an offscreen fb with sentinel bg, then convert to RGBA */
+    uint32_t BG = 0x123456;
+    fb_fill(&tmp_fb, BG);
+    for (int dy = -outline_px; dy <= outline_px; dy++)
+        for (int dx = -outline_px; dx <= outline_px; dx++)
+            if (dx || dy) draw_text(&tmp_fb, f, s, outline_px + dx + 1, outline_px + dy + 1, 0x000000);
+    draw_text(&tmp_fb, f, s, outline_px + 1, outline_px + 1, rgb);
+    for (long i = 0; i < (long)w * h; i++) {
+        uint32_t c = tmp_fb.px[i];
+        if (c == BG) continue;
+        o.rgba[i * 4 + 0] = (uint8_t)(c >> 16);
+        o.rgba[i * 4 + 1] = (uint8_t)(c >> 8);
+        o.rgba[i * 4 + 2] = (uint8_t)c;
+        o.rgba[i * 4 + 3] = 255;
+    }
+    free(tmp_fb.px);
+    return o;
+}

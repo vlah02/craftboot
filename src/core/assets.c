@@ -92,3 +92,41 @@ img_t img_load(const char *path) {
     return o;
 }
 void img_free(img_t *s) { free(s->rgba); s->rgba = 0; }
+
+int font_load(font_t *f, const char *png_path, const char *json_path) {
+    memset(f, 0, sizeof *f);
+    f->atlas = img_load(png_path);
+    if (!f->atlas.rgba) return -1;
+    long n; char *js = slurp(json_path, &n); if (!js) return -1;
+    jsmn_parser p; jsmn_init(&p);
+    static jsmntok_t t[2048];
+    int nt = jsmn_parse(&p, js, n, t, 2048);
+    if (nt < 1) { free(js); return -1; }
+    int i = 1;
+    for (int k = 0; k < t[0].size; k++) {
+        if (teq(js, &t[i], "size")) f->size = atoi(js + t[i + 1].start);
+        else if (teq(js, &t[i], "glyphs")) {
+            int go = i + 1, gi = go + 1;
+            for (int g = 0; g < t[go].size; g++) {
+                unsigned char ch = (unsigned char)js[t[gi].start];
+                glyph_t *gl = (ch >= 32 && ch < 127) ? &f->g[ch - 32] : NULL;
+                int obj = gi + 1, fi = obj + 1;
+                for (int q = 0; q < t[obj].size; q++) {
+                    int v = atoi(js + t[fi + 1].start);
+                    if (gl) {
+                        if      (teq(js, &t[fi], "x")) gl->x = (short)v;
+                        else if (teq(js, &t[fi], "y")) gl->y = (short)v;
+                        else if (teq(js, &t[fi], "w")) gl->w = (short)v;
+                        else if (teq(js, &t[fi], "h")) gl->h = (short)v;
+                        else if (teq(js, &t[fi], "adv")) gl->adv = (short)v;
+                    }
+                    fi = skip(t, nt, fi + 1);
+                }
+                gi = skip(t, nt, obj);
+            }
+        }
+        i = skip(t, nt, i + 1);
+    }
+    free(js);
+    return f->size ? 0 : -1;
+}
