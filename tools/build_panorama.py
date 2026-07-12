@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
 Convert the 6 Minecraft panorama cubemap faces into one seamless equirectangular
-PNG that the app can scroll horizontally with perfect wraparound.
+image that the app can scroll horizontally with perfect wraparound. Output
+format is picked from the output path's extension; craftboot's own panoramas
+are shipped as JPEG q90 (see assets/panoramas/), so pass a .jpg/.jpeg path —
+anything else (e.g. .png) is saved losslessly instead.
 
-Usage: build_panorama.py <faces_dir> <output.png> [width] [height]
+Usage: build_panorama.py <faces_dir> <output.jpg> [width] [height]
 Faces expected: panorama_0..5.png  (0 front, 1 right, 2 back, 3 left, 4 up, 5 down)
 """
 import os

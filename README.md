@@ -156,6 +156,12 @@ normally, so the amp (and anything else ACPI-owned) comes up correctly; `kexec`
 is kept working and wired to "Ubuntu (recovery mode)" in *Extras* since it's
 still the faster path when audio doesn't matter.
 
+Recovery keeps `kexec` rather than `BootNext` for a different reason: `BootNext`
+can only select a firmware entry, which boots that entry's *default* kernel and
+cmdline, while recovery needs a custom cmdline (`recovery nomodeset ...`) —
+only `kexec_file_load()` can hand the kernel a custom cmdline in one click, and
+the ACPI/audio caveat above doesn't matter in a recovery shell anyway.
+
 Handoff is a dry-run unless craftboot is running as PID 1 (`getpid() == 1`);
 pass `--live` to force it, `--dry` to force a dry-run even as init.
 
@@ -236,6 +242,11 @@ Edit [`boot_entries.json`](boot_entries.json) with **your** values:
 - `windows_efi_uuid` — the FAT UUID of your Windows EFI (currently informational;
   the Windows entry is resolved by matching "Windows Boot Manager" in `efivars`
   at runtime).
+- `match` on every `bootnext`-type entry (the checked-in "Ubuntu" entry, and any
+  others you add) — it must equal the firmware boot entry's description
+  **exactly** as `efibootmgr` prints it (e.g. `Ubuntu`, `Windows Boot Manager`).
+  Check yours with `efibootmgr | grep -i ubuntu` (or `| grep -i windows`); the
+  checked-in `"Ubuntu"` is only a guess for a stock Ubuntu installer entry.
 - the `kernel` / `initrd` / `cmdline` fields for the "Ubuntu (recovery mode)" entry.
 
 ### 2. Try it in QEMU first (no risk)
@@ -273,7 +284,29 @@ This builds the initramfs, builds + signs the UKI, copies Ubuntu's shim into
 a kernel post-install hook (`/etc/kernel/postinst.d/zz-craftboot-uki`) that
 rebuilds + re-signs the UKI automatically on every kernel update.
 
-### 5. Make it the default (optional)
+### 5. Make GRUB hand off silently (GRUB pass-through)
+
+Craftboot *is* the interactive menu now, so GRUB shouldn't stop to show its own
+menu on top of it — otherwise you pick Ubuntu twice (once in craftboot, once
+in GRUB). Make GRUB boot straight through instead:
+
+```bash
+sudo sed -i 's/^GRUB_TIMEOUT_STYLE=menu/GRUB_TIMEOUT_STYLE=hidden/; s/^GRUB_TIMEOUT=10/GRUB_TIMEOUT=0/' /etc/default/grub
+sudo update-grub
+```
+
+That `sed` targets stock Ubuntu's default `/etc/default/grub` values
+(`GRUB_TIMEOUT=10`, `GRUB_TIMEOUT_STYLE=menu`) — if yours were already changed,
+just make sure you end up with `GRUB_TIMEOUT=0` and `GRUB_TIMEOUT_STYLE=hidden`,
+then `sudo update-grub`.
+
+> 💡 Need the GRUB menu back — older kernel, recovery, troubleshooting? Hold
+> **Shift**, or tap **Esc**, during the GRUB hand-off to force it to show. A
+> direct firmware **Ubuntu** pick (from the UEFI boot menu, not through
+> craftboot) also boots straight through now — GRUB's interactive theme isn't
+> shown on a normal boot anymore, since craftboot replaced that role.
+
+### 6. Make it the default (optional)
 
 The install adds `Craftboot` first in `BootOrder`. To set the order explicitly:
 
@@ -342,6 +375,11 @@ See [CHANGELOG.md](CHANGELOG.md) for what shipped in each tag.
 
 - If the `Craftboot` entry ever fails, the firmware **falls through** to the next
   entry — pick **Ubuntu** in the UEFI boot menu.
+- With [GRUB pass-through](#5-make-grub-hand-off-silently-grub-pass-through) set
+  up, that firmware **Ubuntu** entry (and craftboot's own Ubuntu button) both
+  boot straight through without stopping at GRUB's menu. Hold **Shift**, or tap
+  **Esc**, during the GRUB hand-off if you need the GRUB menu itself (older
+  kernel, advanced options).
 - After `/init` exits (menu quit, handoff failure, any error) the initramfs
   **auto-reboots** — there's no dead console to get stuck at (a `DEBUG=1` image
   drops to a busybox shell instead, if one was staged).

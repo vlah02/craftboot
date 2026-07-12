@@ -54,6 +54,24 @@ Python, no interpreter in the boot image at all.
   failure, config load failure, display open failure, handoff failure) —
   the "all-exits contract": every code path either hands off control or
   reboots, never leaves a dead screen.
+- Guard `ms_move`/`ms_select` against an empty menu (e.g. a submenu with no
+  entries in `boot_entries.json`) — previously a `SIGFPE` on the `% n` wrap,
+  now a safe no-op.
+
+### Docs
+- Setup now documents **GRUB pass-through**: hide GRUB's own menu after
+  installing the firmware entry (`GRUB_TIMEOUT=0` / `GRUB_TIMEOUT_STYLE=hidden`,
+  `update-grub`) so craftboot is the only interactive menu on a normal boot;
+  Shift/Esc still forces the GRUB menu back when needed.
+- Documented that a `bootnext` entry's `match` value must equal the firmware
+  boot entry's description exactly as `efibootmgr` prints it, and how to check
+  it (`efibootmgr | grep -i <os>`).
+- Explained why recovery keeps `kexec` instead of `BootNext`: `BootNext` can
+  only boot a firmware entry's default kernel/cmdline, and recovery needs a
+  custom cmdline that only `kexec_file_load()` can hand over directly.
+- Clean-version demo recapture (footer reads `Craftboot v2.1` instead of
+  `v2.1-dirty`); dropped a stale `--windowed` flag and a Milestone-1-era
+  `boot_entries.json` comment.
 
 ## v1.0 — 2026-07-11
 
