@@ -83,7 +83,10 @@ current_ubuntu_bootnum() {
 install() {
     [[ -f "$KEYDIR/MOK.key" ]] || { echo "No MOK key — run: sudo $HERE/uki-setup.sh genkey (and install) first."; exit 1; }
     [[ -f "$KEYDIR/MOK.der" ]] || { echo "No MOK.der in $KEYDIR — run: sudo $HERE/uki-setup.sh genkey first."; exit 1; }
-    if ! mokutil --test-key "$KEYDIR/MOK.der" 2>&1 | grep -qi "already enrolled"; then
+    # capture first (mokutil exits non-zero even when enrolled; pipefail would
+    # otherwise poison the pipeline and give a false "not enrolled")
+    mok_status="$(mokutil --test-key "$KEYDIR/MOK.der" 2>&1 || true)"
+    if ! printf '%s' "$mok_status" | grep -qi "already enrolled"; then
         echo "The Craftboot MOK is NOT enrolled yet (checked with mokutil --test-key)."
         echo "Complete 'sudo $HERE/uki-setup.sh genkey' + the MOK Manager enrollment reboot first."
         exit 1
