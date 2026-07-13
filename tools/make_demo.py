@@ -65,21 +65,41 @@ def main():
                           "time and --step 8 is a ~4x timelapse")
     ap.add_argument("--limit", type=int, default=None,
                      help="cap the number of frames taken from EACH dir after stepping")
+    ap.add_argument("--sequential", type=int, default=None, metavar="SEG_FRAMES",
+                     help="continuous-pan mode for a multi-world montage: dir i contributes "
+                          "SEG_FRAMES output frames starting at capture index "
+                          "start + i*(SEG_FRAMES*step), each subsampled by --step. Because "
+                          "every capture starts at the same yaw (0.7) and advances at the same "
+                          "per-frame rate, the yaw carries over across dir boundaries -- one "
+                          "unbroken left-to-right pan whose world texture swaps at each segment")
     args = ap.parse_args()
 
     size = (args.width, args.height)
     paths = []
-    for d in args.dirs:
-        found = sorted(glob.glob(os.path.join(d, "frame_*.raw")))
-        if not found:
-            sys.exit(f"no frame_*.raw files in {d}")
-        window = found[args.start:args.end]
-        window = window[::args.step]
-        if args.limit is not None:
-            window = window[:args.limit]
-        if not window:
-            sys.exit(f"{d}: --start/--end/--step/--limit left no frames")
-        paths.extend(window)
+    if args.sequential is not None:
+        seg = args.sequential
+        for i, d in enumerate(args.dirs):
+            found = sorted(glob.glob(os.path.join(d, "frame_*.raw")))
+            if not found:
+                sys.exit(f"no frame_*.raw files in {d}")
+            base = args.start + i * seg * args.step
+            window = found[base : base + seg * args.step : args.step]
+            if len(window) < seg:
+                sys.exit(f"{d}: only {len(window)} frames from index {base} "
+                         f"(need {seg} at step {args.step}); capture more frames")
+            paths.extend(window)
+    else:
+        for d in args.dirs:
+            found = sorted(glob.glob(os.path.join(d, "frame_*.raw")))
+            if not found:
+                sys.exit(f"no frame_*.raw files in {d}")
+            window = found[args.start:args.end]
+            window = window[::args.step]
+            if args.limit is not None:
+                window = window[:args.limit]
+            if not window:
+                sys.exit(f"{d}: --start/--end/--step/--limit left no frames")
+            paths.extend(window)
 
     frames = [load_frame(p, size) for p in paths]
     duration_ms = max(1, int(1000.0 // args.fps))   # 60fps -> 16ms/frame
