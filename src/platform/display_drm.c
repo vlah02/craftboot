@@ -219,13 +219,22 @@ void display_flip(display_t *d) {
         struct drm_mode_crtc_page_flip pf = { .crtc_id = d->crtc_id, .fb_id = d->fb_id[back],
                                               .flags = DRM_MODE_PAGE_FLIP_EVENT };
         if (ioctl(d->fd, DRM_IOCTL_MODE_PAGE_FLIP, &pf) == 0) {
-            char buf[256]; ssize_t n = read(d->fd, buf, sizeof buf); (void)n; /* wait for vblank event */
-            d->front = back;
-            return;
+            char buf[256];                     /* wait for the vblank event */
+            ssize_t n;
+            do { n = read(d->fd, buf, sizeof buf); } while (n < 0 && errno == EINTR);
+            if (n <= 0) {                      /* event lost: stop trusting flips */
+                fprintf(stderr, "[craftboot] drm: flip event read failed, DirtyFB fallback\n");
+                d->can_flip = 0;               /* front NOT updated; DirtyFB redraws it */
+            } else {
+                d->front = back;
+                return;
+            }
+        } else {
+            fprintf(stderr, "[craftboot] drm: PAGE_FLIP failed (%s), falling back to DirtyFB\n",
+                    strerror(errno));
+            d->can_flip = 0;
         }
-        fprintf(stderr, "[craftboot] drm: PAGE_FLIP failed (%s), falling back to DirtyFB\n",
-                strerror(errno));
-        d->can_flip = 0;                                    /* fall through */
+        /* fall through to DirtyFB */
     }
     copy_to(d, d->front);
     struct drm_clip_rect clip = { 0, 0, (unsigned short)d->staging.w,

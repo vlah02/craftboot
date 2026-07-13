@@ -6,9 +6,13 @@
 #include "jsmn.h"
 
 static char *slurp(const char *path, long *n) {
-    FILE *f = fopen(path, "rb"); if (!f) return NULL;
-    fseek(f, 0, SEEK_END); *n = ftell(f); fseek(f, 0, SEEK_SET);
-    char *b = malloc(*n + 1);
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long sz = ftell(f);
+    if (sz < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
+    *n = sz;
+    char *b = malloc((size_t)sz + 1);
     if (!b) { fclose(f); return NULL; }
     if (fread(b, 1, *n, f) != (size_t)*n) { fclose(f); free(b); return NULL; }
     b[*n] = 0; fclose(f); return b;

@@ -12,7 +12,7 @@ for name, px in SIZES.items():
     font = ImageFont.truetype(FONT, px)
     chars = [chr(c) for c in range(32, 127)]
     pad = 2
-    cell_w = max(int(font.getlength(c)) for c in chars) + pad * 2
+    cell_w = max(int(font.getlength(c) + 0.999) for c in chars) + pad * 2
     asc, desc = font.getmetrics()
     cell_h = asc + desc + pad * 2
     cols = 16
@@ -24,7 +24,7 @@ for name, px in SIZES.items():
         cx, cy = (i % cols) * cell_w + pad, (i // cols) * cell_h + pad
         d.text((cx, cy), ch, font=font, fill=(255, 255, 255, 255))
         glyphs[ch] = {"x": cx - pad, "y": cy - pad, "w": cell_w, "h": cell_h,
-                      "adv": int(font.getlength(ch))}
+                      "adv": int(font.getlength(ch) + 0.5)}
     atlas.save(f"{OUT}/{name}.png")
     with open(f"{OUT}/{name}.json", "w") as jf:
         json.dump({"size": px, "cell_h": cell_h, "glyphs": glyphs}, jf)

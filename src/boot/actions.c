@@ -127,7 +127,7 @@ static int find_bootnum_by_desc(const char *want, unsigned *out) {
         snprintf(p, sizeof p, EFIVARS "/%s", e->d_name);
         FILE *f = fopen(p, "rb");
         if (!f) continue;
-        unsigned char buf[1024];
+        unsigned char buf[4096];               /* long device-path lists */
         size_t n = fread(buf, 1, sizeof buf, f);
         fclose(f);
         char desc[128];
