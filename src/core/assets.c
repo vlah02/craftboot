@@ -22,8 +22,18 @@ static int teq(const char *js, const jsmntok_t *t, const char *s) {
            !strncmp(js + t->start, s, t->end - t->start);
 }
 static void tcpy(char *dst, size_t cap, const char *js, const jsmntok_t *t) {
-    size_t n = (size_t)(t->end - t->start); if (n >= cap) n = cap - 1;
-    memcpy(dst, js + t->start, n); dst[n] = 0;
+    /* jsmn hands back the raw source span without decoding JSON string
+     * escapes, so unescape here: "\\"->"\", "\""->"\"", "\/"->"/", etc.
+     * (emit the byte after a backslash literally). Needed for e->path, whose
+     * "\\EFI\\..." JSON must resolve to single-backslash EFI separators for
+     * EFI_FILE_PROTOCOL.Open. Preserves the cap-1 bound and NUL terminator. */
+    const char *s = js + t->start, *end = js + t->end;
+    size_t o = 0;
+    while (s < end && o < cap - 1) {
+        if (*s == '\\' && s + 1 < end) s++;   /* skip backslash, emit escaped byte */
+        dst[o++] = *s++;
+    }
+    dst[o] = 0;
 }
 static int skip(const jsmntok_t *t, int nt, int i) {   /* index just past token i */
     int end = t[i].end, j = i + 1;
@@ -31,8 +41,7 @@ static int skip(const jsmntok_t *t, int nt, int i) {   /* index just past token 
     return j;
 }
 static etype_t etype(const char *s) {
-    if (!strcmp(s, "windows"))  return E_WINDOWS;
-    if (!strcmp(s, "kexec"))    return E_KEXEC;
+    if (!strcmp(s, "chainload")) return E_CHAINLOAD;
     if (!strcmp(s, "bootnext")) return E_BOOTNEXT;
     if (!strcmp(s, "submenu")) return E_SUBMENU;
     if (!strcmp(s, "uefi"))    return E_UEFI;
@@ -49,9 +58,7 @@ static void parse_entry(const char *js, const jsmntok_t *t, int nt, int obj, ent
         else if (teq(js, key, "label"))   tcpy(e->label, sizeof e->label, js, val);
         else if (teq(js, key, "type"))    e->type = etype(buf);
         else if (teq(js, key, "target"))  tcpy(e->target, sizeof e->target, js, val);
-        else if (teq(js, key, "kernel"))  tcpy(e->kernel, sizeof e->kernel, js, val);
-        else if (teq(js, key, "initrd"))  tcpy(e->initrd, sizeof e->initrd, js, val);
-        else if (teq(js, key, "cmdline")) tcpy(e->cmdline, sizeof e->cmdline, js, val);
+        else if (teq(js, key, "path"))    tcpy(e->path, sizeof e->path, js, val);
         else if (teq(js, key, "match"))   tcpy(e->match, sizeof e->match, js, val);
         i = skip(t, nt, i + 1);
     }

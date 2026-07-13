@@ -147,9 +147,11 @@ static int dry_run_dispatch_return_codes(void) {
     memset(&e, 0, sizeof e); e.type = E_INFO;
     OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
 
-    /* E_WINDOWS dry-run returns 0 regardless of whether the firmware has a
-     * "Windows Boot Manager" load option (the match only gates a live boot). */
-    memset(&e, 0, sizeof e); e.type = E_WINDOWS; strcpy(e.label, "Windows");
+    /* Windows dry-run (now an E_BOOTNEXT entry) returns 0 regardless of
+     * whether the firmware has a "Windows Boot Manager" load option (the
+     * match only gates a live boot). */
+    memset(&e, 0, sizeof e); e.type = E_BOOTNEXT;
+    strcpy(e.label, "Windows"); strcpy(e.match, "Windows Boot Manager");
     OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
 
     /* E_BOOTNEXT with a match string: dry-run returns 0. */
@@ -161,28 +163,6 @@ static int dry_run_dispatch_return_codes(void) {
     memset(&e, 0, sizeof e); e.type = E_BOOTNEXT; strcpy(e.id, "broken");
     OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == -1);
     OK(strstr(log, "no match string") != NULL);
-    return 0;
-}
-
-static int kexec_root_prefixes_paths(void) {
-    /* E_KEXEC dry-run must join root_prefix + kernel/initrd exactly ("%s%s")
-     * and echo the assembled paths -- the root prefix is what makes the
-     * on-disk /boot/... paths resolve once the real root is mounted at /mnt. */
-    entry_t e; memset(&e, 0, sizeof e);
-    e.type = E_KEXEC;
-    strcpy(e.label, "Recovery"); strcpy(e.id, "rec");
-    strcpy(e.kernel, "/boot/vmlinuz");
-    strcpy(e.initrd, "/boot/initrd.img");
-    strcpy(e.cmdline, "ro quiet");
-    char log[2048]; int rc;
-    OK(run_dry(&e, "/mnt", &rc, log, sizeof log) == 0);
-    OK(rc == 0);
-    OK(strstr(log, "kernel=/mnt/boot/vmlinuz") != NULL);
-    OK(strstr(log, "initrd=/mnt/boot/initrd.img") != NULL);
-    OK(strstr(log, "cmdline=ro quiet") != NULL);
-    /* empty root prefix leaves the path unchanged */
-    OK(run_dry(&e, "", &rc, log, sizeof log) == 0);
-    OK(strstr(log, "kernel=/boot/vmlinuz") != NULL);
     return 0;
 }
 
@@ -198,6 +178,5 @@ int main(void) {
     RUN(osindications_fresh_value);
     RUN(osindications_preserves_existing_bits);
     RUN(dry_run_dispatch_return_codes);
-    RUN(kexec_root_prefixes_paths);
     return 0;
 }

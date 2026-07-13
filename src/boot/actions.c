@@ -1,11 +1,10 @@
-/* Real boot handoff: kexec_file_load() for Linux, EFI BootNext for Windows,
- * OsIndications boot-to-firmware-UI for the "UEFI Firmware Settings" entry.
+/* Real boot handoff: EFI BootNext for firmware-matched entries (Windows and
+ * any other bootnext target), OsIndications boot-to-firmware-UI for the
+ * "UEFI Firmware Settings" entry.
  *
- * Every success path here either never returns (kexec_file_load + the
- * LINUX_REBOOT_CMD_KEXEC reboot syscall hands control straight to the new
- * kernel) or calls reboot(RB_AUTOBOOT) itself; every failure path returns
- * -1 so src/init/main.c's own sync()+reboot(RB_AUTOBOOT) at the bottom of
- * main() still fires. There is no path back into the menu.
+ * Every success path here calls reboot(RB_AUTOBOOT) itself; every failure
+ * path returns -1 so src/init/main.c's own sync()+reboot(RB_AUTOBOOT) at the
+ * bottom of main() still fires. There is no path back into the menu.
  */
 #include "core/assets.h"
 #include "boot/actions.h"
@@ -144,8 +143,8 @@ static void rw_immutable_off(const char *path) {
 }
 
 /* Scan the Boot#### load options for one whose UCS-2-decoded description
- * equals `want` exactly. Used by E_WINDOWS ("Windows Boot Manager") and by
- * E_BOOTNEXT entries (config-supplied "match" string). */
+ * equals `want` exactly. Used by E_BOOTNEXT entries (config-supplied "match"
+ * string, e.g. "Windows Boot Manager"). */
 static int find_bootnum_by_desc(const char *want, unsigned *out) {
     DIR *d = opendir(EFIVARS);
     if (!d) return -1;
@@ -208,36 +207,11 @@ static int set_boot_to_fw(void) {
     return ok ? 0 : -1;
 }
 
-/* Never returns on success: kexec_file_load() stages the new kernel/initrd,
- * then the LINUX_REBOOT_CMD_KEXEC reboot syscall jumps straight into it. */
-static int do_kexec(const char *kp, const char *ip, const char *cmdline) {
-    int kfd = open(kp, O_RDONLY | O_CLOEXEC);
-    int ifd = open(ip, O_RDONLY | O_CLOEXEC);
-    if (kfd < 0 || ifd < 0) {
-        fprintf(stderr, "[craftboot] kexec: open failed kernel=%s (fd=%d) initrd=%s (fd=%d)\n",
-                kp, kfd, ip, ifd);
-        if (kfd >= 0) close(kfd);
-        if (ifd >= 0) close(ifd);
-        return -1;
-    }
-    long r = syscall(SYS_kexec_file_load, kfd, ifd,
-                      (unsigned long)strlen(cmdline) + 1, cmdline, 0UL);
-    close(kfd);
-    close(ifd);
-    if (r != 0) {
-        perror("[craftboot] kexec_file_load");
-        return -1;
-    }
-    sync();
-    syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2, LINUX_REBOOT_CMD_KEXEC, NULL);
-    perror("[craftboot] reboot(LINUX_REBOOT_CMD_KEXEC)");   /* only reached on failure */
-    return -1;
-}
-
-/* Shared by E_WINDOWS and E_BOOTNEXT: find the load option whose UCS-2
- * description equals `want`, stage its number in BootNext, and reboot into
- * the firmware's own loader. `name` is the short name used in diagnostics
- * ("Windows" / the match string). Never returns on live success. */
+/* Shared handoff for all E_BOOTNEXT entries: find the load option whose
+ * UCS-2 description equals `want`, stage its number in BootNext, and reboot
+ * into the firmware's own loader. `name` is the short name used in
+ * diagnostics (the match string, e.g. "Windows Boot Manager"). Never returns
+ * on live success. */
 static int do_bootnext(const entry_t *e, const char *want, const char *name,
                        const char *mode, int live) {
     unsigned num = 0;
@@ -255,28 +229,9 @@ static int do_bootnext(const entry_t *e, const char *want, const char *name,
 }
 
 int action_execute(const entry_t *e, const char *root, int live) {
+    (void)root;
     const char *mode = live ? "LIVE handoff" : "dry-run handoff";
     switch (e->type) {
-    case E_KEXEC: {
-        char kp[256], ip[256];
-        snprintf(kp, sizeof kp, "%s%s", root, e->kernel);
-        snprintf(ip, sizeof ip, "%s%s", root, e->initrd);
-        /* One fprintf() per line: /dev/kmsg treats each write(2) as its own
-         * record, and glibc's fully-buffered stdio (stderr isn't a tty once
-         * dup2'd onto /dev/kmsg) can coalesce a single multi-line fprintf
-         * into one write -- the kernel then splits that back up on the
-         * embedded '\n's but re-timestamps oddly. One line per fprintf
-         * keeps every diagnostic line clean on serial, matching every
-         * other message in this codebase. */
-        fprintf(stderr, "[craftboot] %s: %s (id=%s)\n", mode, e->label, e->id);
-        fprintf(stderr, "           kernel=%s\n", kp);
-        fprintf(stderr, "           initrd=%s\n", ip);
-        fprintf(stderr, "           cmdline=%s\n", e->cmdline);
-        if (!live) return 0;
-        return do_kexec(kp, ip, e->cmdline);
-    }
-    case E_WINDOWS:
-        return do_bootnext(e, "Windows Boot Manager", "Windows", mode, live);
     case E_BOOTNEXT:
         if (!e->match[0]) {
             fprintf(stderr, "[craftboot] %s: %s (id=%s)\n", mode, e->label, e->id);

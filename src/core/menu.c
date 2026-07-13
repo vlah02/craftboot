@@ -36,7 +36,7 @@ void ms_tick(menustate_t *m, double dt) {
 }
 void ms_cancel_autoboot(menustate_t *m) { m->countdown = -1; }
 static int bootable(const entry_t *e) {
-    return e->type == E_WINDOWS || e->type == E_KEXEC || e->type == E_BOOTNEXT;
+    return e->type == E_CHAINLOAD || e->type == E_BOOTNEXT;
 }
 const entry_t *ms_default_entry(const menustate_t *m) {
     int n; const entry_t *es = m->cfg->menu[0]; n = m->cfg->nmenu[0];
