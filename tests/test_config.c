@@ -42,5 +42,15 @@ static int caps_entries_at_eight(void) {
     unlink(path);
     return 0;
 }
+static int loads_from_mem(void) {
+    char *js; long n; FILE *f = fopen("boot_entries.json","rb");
+    OK(f != NULL);
+    fseek(f,0,SEEK_END); n=ftell(f); fseek(f,0,SEEK_SET);
+    js=malloc(n+1); OK(fread(js,1,n,f)==(size_t)n); js[n]=0; fclose(f);
+    config_t c; OK(config_load_mem(&c, js, n) == 0);
+    OK(c.nmenu[0] >= 1);
+    free(js);
+    return 0;
+}
 int main(void) { RUN(loads_real_config); RUN(missing_file_fails);
-                 RUN(caps_entries_at_eight); return 0; }
+                 RUN(caps_entries_at_eight); RUN(loads_from_mem); return 0; }

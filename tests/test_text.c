@@ -58,5 +58,19 @@ static int renders_edge_strings(void) {
     img_free(&empty); img_free(&lng);
     return 0;
 }
+static int font_loads_from_mem(void) {
+    /* read the two atlas files into buffers, decode via _mem */
+    FILE *p=fopen("assets/fonts/baked/small.png","rb"); OK(p);
+    fseek(p,0,SEEK_END); long pn=ftell(p); fseek(p,0,SEEK_SET);
+    unsigned char *pb=malloc(pn); OK(fread(pb,1,pn,p)==(size_t)pn); fclose(p);
+    FILE *j=fopen("assets/fonts/baked/small.json","rb"); OK(j);
+    fseek(j,0,SEEK_END); long jn=ftell(j); fseek(j,0,SEEK_SET);
+    char *jb=malloc(jn); OK(fread(jb,1,jn,j)==(size_t)jn); fclose(j);
+    font_t fnt; OK(font_load_mem(&fnt, pb, (int)pn, jb, jn) == 0);
+    OK(fnt.size == 32);
+    free(pb); free(jb);
+    return 0;
+}
 int main(void) { RUN(load_and_measure); RUN(draws_pixels); RUN(renders_to_img);
-                 RUN(escaped_glyphs_distinct); RUN(renders_edge_strings); return 0; }
+                 RUN(escaped_glyphs_distinct); RUN(renders_edge_strings);
+                 RUN(font_loads_from_mem); return 0; }
