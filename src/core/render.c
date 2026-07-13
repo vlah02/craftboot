@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifndef PANO_NO_THREADS
 #include <unistd.h>
 #include <pthread.h>
+#endif
 #ifndef PANO_NO_AVX2
 #include <immintrin.h>
 #endif
@@ -168,8 +170,12 @@ struct pano {
 pano_t *pano_create(const img_t *eq, int out_w, int out_h, float fov_deg) {
     pano_t *p = calloc(1, sizeof *p);
     p->ew = eq->w; p->eh = eq->h; p->w = out_w; p->h = out_h;
+#ifdef PANO_NO_THREADS
+    p->nthreads = 1;
+#else
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
     p->nthreads = ncpu > 8 ? 8 : (ncpu < 1 ? 1 : (int)ncpu);
+#endif
     p->src = malloc((size_t)eq->w * eq->h * 4);
     for (long i = 0; i < (long)eq->w * eq->h; i++)
         p->src[i] = (uint32_t)eq->rgba[i*4] << 16 | (uint32_t)eq->rgba[i*4+1] << 8 | eq->rgba[i*4+2];
@@ -265,6 +271,10 @@ static void *render_slice(void *arg) {
 void pano_render(pano_t *p, fb_t *out, double yaw_turns) {
     double t = fmod(yaw_turns, 1.0); if (t < 0) t += 1.0;
     int64_t yawfx = (int64_t)(t * p->ew * 65536.0);
+#ifdef PANO_NO_THREADS
+    slice_t sl = { p, out, yawfx, 0, p->h };
+    render_slice(&sl);
+#else
     int nt = p->nthreads;
     pthread_t th[8]; slice_t sl[8];
     for (int i = 0; i < nt; i++) {
@@ -273,6 +283,7 @@ void pano_render(pano_t *p, fb_t *out, double yaw_turns) {
     }
     render_slice(&sl[nt - 1]);
     for (int i = 0; i < nt - 1; i++) pthread_join(th[i], NULL);
+#endif
 }
 void pano_destroy(pano_t *p) {
     free(p->src); free(p->baselon); free(p->row0); free(p->row1); free(p->wv); free(p);

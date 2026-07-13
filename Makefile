@@ -107,10 +107,14 @@ $(B)/fuzz_parse: tests/fuzz_parse.c $(B)/asan_assets.o $(B)/asan_actions.o $(B)/
 # builtins. Cross-compiled PE32+ via mingw's ms_abi support.
 MINGW := x86_64-w64-mingw32-gcc
 EFI_CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar \
-              -mno-red-zone -Wall -Wextra -Isrc -Isrc/vendor -DPANO_NO_AVX2 -DEFI
+              -mno-red-zone -mno-stack-arg-probe -Wall -Wextra -Isrc -Isrc/vendor \
+              -DPANO_NO_AVX2 -DPANO_NO_THREADS -DEFI -DCRAFTBOOT_VERSION_GIT=\"v3.0\" \
+              -D__USE_MINGW_ANSI_STDIO=0 -DNDEBUG \
+              -DSTBI_NO_STDIO -DSTBI_NO_LINEAR
 EFI_LDFLAGS := -nostdlib -Wl,-dll -shared -Wl,--subsystem,10 -e efi_main
 EFI_SRC := src/efi/main.c src/efi/mini_libc.c src/efi/display_efi.c src/efi/input_efi.c \
-           src/efi/fs.c src/efi/sys.c src/efi/actions_efi.c src/core/efivar.c
+           src/efi/fs.c src/efi/sys.c src/efi/actions_efi.c src/efi/plat_efi.c \
+           src/core/efivar.c src/core/render.c src/core/menu.c src/core/assets.c
 efi: ; @mkdir -p build; $(MINGW) $(EFI_CFLAGS) $(EFI_SRC) -o build/craftboot.efi $(EFI_LDFLAGS)
 .PHONY: efi
 # (Core/EFI source list grows in later tasks.)

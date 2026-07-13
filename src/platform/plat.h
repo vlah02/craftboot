@@ -17,3 +17,7 @@ void     plat_sleep(double seconds);
 /* Emit one diagnostic line (already formatted, no trailing newline required).
  * May be a no-op. (Host: fprintf(stderr,"%s\n"); EFI: ConOut or no-op.) */
 void     plat_log(const char *msg);
+/* Reclaim this frame's transient scratch allocations. Call once per render-loop
+ * iteration, AFTER one-shot asset loading. (Host: no-op -- real malloc/free;
+ * EFI: rolls the bump arena back to a mark taken on the first call.) */
+void     plat_scratch_reset(void);

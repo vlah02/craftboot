@@ -31,3 +31,6 @@ uint64_t plat_rand(void) { uint64_t r; if (getrandom(&r, sizeof r, 0) < 0) r = 0
 double plat_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec / 1e9; }
 void plat_sleep(double s) { struct timespec ts = { (time_t)s, (long)((s - (double)(time_t)s) * 1e9) }; nanosleep(&ts, NULL); }
 void plat_log(const char *msg) { fprintf(stderr, "%s\n", msg); }
+/* No-op: the host uses the real malloc/free, so per-frame scratch is freed
+ * normally and there is nothing to reclaim. */
+void plat_scratch_reset(void) {}

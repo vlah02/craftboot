@@ -1,31 +1,59 @@
-/* Placeholder EFI entry point (GOP-hello). Proves the freestanding toolchain:
- * locate GOP, fill the framebuffer with a recognizable non-black color, idle.
- * Later tasks replace this with the real display/input/fs/handoff backends. */
+/* EFI entry point: set globals, allocate the mini_libc arena, init the
+ * timing/RNG + file-system backends, load the boot config, open GOP + input,
+ * run the real Minecraft menu, and hand off to the selected entry. */
 #include "efi/efi.h"
 #include "efi/mini_libc.h"
+#include "efi/fs.h"
+#include "efi/sys.h"
+#include "core/assets.h"
+#include "core/menu.h"
+#include "platform/display.h"
+#include "platform/input.h"
+#include "boot/actions.h"
 
 EFI_SYSTEM_TABLE *ST;
 EFI_BOOT_SERVICES *BS;
-/* Declared here (uninitialized) so src/efi/actions_efi.c's `extern
- * EFI_HANDLE g_image;` resolves at link time; efi_main below does not yet
- * assign it -- that wiring, along with the display/input/fs/handoff
- * integration this placeholder efi_main doesn't do yet either, is Task 8. */
+/* Defined (and now assigned) here so src/efi/actions_efi.c's
+ * `extern EFI_HANDLE g_image;` resolves for the chainload handoff. */
 EFI_HANDLE g_image;
 
+/* Bump-allocator arena for mini_libc. Sized for a 1920x1080 render: decoded
+ * panorama (~16 MB), projection LUTs (~30 MB), scaled sprites/fonts, plus
+ * stb_image's realloc-copy churn (the bump allocator never reclaims). 512 MB
+ * leaves generous headroom on the 2 GB QEMU guest. */
+#define ARENA_PAGES (131072u)   /* 131072 * 4 KiB = 512 MiB */
+
+static void fatal(const CHAR16 *msg) {
+    if (ST->ConOut) ST->ConOut->OutputString(ST->ConOut, (CHAR16*)msg);
+    for (;;) BS->Stall(1000000);
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
-    (void)image;
     ST = st;
     BS = st->BootServices;
-    BS->SetWatchdogTimer(0, 0, 0, NULL);
+    g_image = image;
+    BS->SetWatchdogTimer(0, 0, 0, (CHAR16*)0);
 
-    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
-    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
-    if (BS->LocateProtocol(&gop_guid, NULL, (void**)&gop) == 0 && gop) {
-        uint32_t *fb = (uint32_t*)(uintptr_t)gop->Mode->FrameBufferBase;
-        uint32_t n = gop->Mode->Info->PixelsPerScanLine * gop->Mode->Info->VerticalResolution;
-        for (uint32_t i = 0; i < n; i++) fb[i] = 0x00204060; /* recognizable fill */
-    }
+    /* mini_libc allocator must be live before the first malloc. */
+    UINT64 arena = 0;
+    if (BS->AllocatePages(AllocateAnyPages, EfiLoaderData, ARENA_PAGES, &arena) != 0 || !arena)
+        fatal((CHAR16*)L"arena alloc failed\r\n");
+    mini_libc_init((void*)(uintptr_t)arena, (size_t)ARENA_PAGES * 4096u);
 
-    for (;;) BS->Stall(1000000);
+    sys_init();
+    fs_init(image);
+
+    config_t cfg;
+    if (config_load(&cfg, "\\EFI\\craftboot\\boot_entries.json") != 0)
+        fatal((CHAR16*)L"config load failed\r\n");
+
+    display_t *d = display_open(1920, 1080);
+    if (!d) fatal((CHAR16*)L"display_open failed\r\n");
+    input_t *in = input_open(d);
+
+    const entry_t *e = menu_run(d, in, &cfg, "\\EFI\\craftboot\\assets");
+    if (e) action_execute(e, 1);      /* live handoff (chainload/bootnext/uefi) */
+
+    for (;;) BS->Stall(1000000);       /* handoff returned or menu quit: idle */
     return 0;
 }

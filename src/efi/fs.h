@@ -16,4 +16,10 @@ void fs_init(EFI_HANDLE image);
  * error) -- *len_out is left untouched on failure. */
 unsigned char *fs_read(const CHAR16 *path, UINTN *len_out);
 
+/* Enumerates directory `dir` on the boot volume. For each regular file whose
+ * ASCII name ends with `ext` (case-sensitive suffix), copies the name (<=255
+ * chars) into names[n] and increments n, up to `max`. Skips subdirectories
+ * and "."/"..". Returns the count (0 if none), or -1 if `dir` can't be opened. */
+int fs_list(const CHAR16 *dir, const char *ext, char (*names)[256], int max);
+
 #endif /* FS_H */

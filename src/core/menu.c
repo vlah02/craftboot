@@ -245,6 +245,11 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
     int warmed = 0;                              /* skip the first frame's startup-gap dt */
     const entry_t *chosen = NULL;
     while (!chosen) {
+        /* Reclaim last frame's transient scratch (scaled buttons/splash). The
+         * first call marks the arena just past scene_load's persistent assets;
+         * nothing allocated inside this loop must survive across frames (fps is
+         * scalar; submenu nav reuses the already-loaded scene). No-op on host. */
+        plat_scratch_reset();
         double t = now_s(), dt = t - tprev; tprev = t;
         action_t a;
         while ((a = input_poll(in)) != ACT_NONE) {
