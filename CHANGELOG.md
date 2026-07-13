@@ -5,6 +5,18 @@ All notable changes to craftboot are documented here. Format loosely follows
 project's `git` tags (`git describe --tags` is the runtime source of truth,
 see [README.md#versioning](README.md#versioning)).
 
+## Unreleased — v2.1 polish
+
+### Added
+- `dist/ubuntu/ubuntu-direct.sh` (opt-in): redirects the firmware `Ubuntu`
+  entry to boot Ubuntu **directly** via a second signed UKI (Ubuntu's real
+  kernel + real initramfs, same MOK key as craftboot's own entry) — no GRUB
+  menu in that path at all, while keeping the entry's label exactly `Ubuntu`
+  so craftboot's `BootNext` handoff keeps matching it unchanged. GRUB is left
+  installed but dormant (no entry points at it); a printed break-glass
+  `efibootmgr` command and the existing "Ubuntu (recovery mode)" kexec entry
+  both still reach it if a kernel update ever breaks the direct UKI.
+
 ## v2.1 — 2026-07-12
 
 The C rewrite: `/init` is now one statically-linked binary — no busybox, no

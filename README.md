@@ -89,7 +89,10 @@ UEFI firmware
   cmdline into one PE binary, which we then sign with our **MOK** key.
 - `shim` (Microsoft-signed, so the firmware trusts it) verifies our UKI against
   the MOK — so Secure Boot stays **on**, and Windows/BitLocker are untouched.
-- GRUB/Ubuntu stays a **separate** firmware entry as a permanent fallback.
+- GRUB/Ubuntu stays a **separate** firmware entry as a permanent fallback — or,
+  optionally, that entry can be redirected to boot Ubuntu **directly** via its
+  own signed UKI, taking GRUB out of the path entirely; see
+  [Optional: boot Ubuntu directly](#optional-boot-ubuntu-directly-remove-grub-from-the-boot-path).
 
 ### The initramfs is one binary
 
@@ -319,6 +322,64 @@ sudo efibootmgr -o 0007,0001,0000,... # craftboot first, then Ubuntu, Windows, .
 or just reorder it in your UEFI BIOS boot menu. Ubuntu and Windows remain
 **separate** entries.
 
+### Optional: boot Ubuntu directly (remove GRUB from the boot path)
+
+[Step 5](#5-make-grub-hand-off-silently-grub-pass-through) hides GRUB's own
+menu, but GRUB is still technically in the path: shim loads GRUB, GRUB loads
+the Ubuntu kernel. `dist/ubuntu/ubuntu-direct.sh` goes one step further and
+removes GRUB from the path completely, for the firmware **Ubuntu** entry:
+
+```bash
+sudo ./dist/ubuntu/ubuntu-direct.sh install
+```
+
+This builds a **second** signed UKI — Ubuntu's real kernel + Ubuntu's real
+initramfs (not craftboot's) + `root=UUID=... ro quiet splash` — signed with
+the **same** MOK key as craftboot's own entry, copies shim next to it at
+`EFI/ubuntudirect/`, then does firmware-entry surgery: it deletes the existing
+shim→GRUB `Ubuntu` entry and recreates an entry with the **exact same label**
+(`Ubuntu`, so craftboot's `BootNext` handoff keeps matching it unchanged) that
+now points at shim→direct-UKI instead. It also installs a second kernel
+post-install hook (`/etc/kernel/postinst.d/zz-ubuntu-direct`) so this UKI
+rebuilds on every kernel update, alongside craftboot's own hook.
+
+End state: **three** independent firmware entries —
+
+| Entry         | Boots |
+|---------------|-------|
+| **Windows**   | Windows, unchanged |
+| **Ubuntu**    | Ubuntu directly — no GRUB menu, no craftboot |
+| **Craftboot** | the graphical menu (this project) |
+
+GRUB itself is **not removed or purged** — it's left installed but **dormant**:
+no firmware entry points at it anymore, and its files under
+`/boot/efi/EFI/ubuntu/` are untouched. That's a deliberate tradeoff: you get a
+GRUB-free boot chain, but the old GRUB menu (needed for e.g. picking an older
+kernel or advanced boot options) is no longer one keypress away. Two ways
+back:
+
+- **Recovery, no reinstall needed:** boot **Craftboot → Extras → "Ubuntu
+  (recovery mode)"** — that's a `kexec` path straight to the real kernel, it
+  doesn't depend on the direct UKI at all. Use it if a kernel update ever
+  breaks the direct UKI, then re-run `sudo ./dist/ubuntu/ubuntu-direct.sh install`
+  to rebuild it.
+- **Break-glass, get GRUB back as its own entry** (doesn't touch the direct
+  `Ubuntu` entry):
+  ```bash
+  sudo efibootmgr --create --disk <disk> --part <part> --label "Ubuntu (GRUB)" --loader '\EFI\ubuntu\shimx64.efi'
+  ```
+  (`ubuntu-direct.sh install` prints the exact command, with `<disk>`/`<part>`
+  filled in, every time it runs.)
+
+This is **opt-in** and independent of steps 1–6 above; the default,
+GRUB-pass-through setup keeps working if you never run this script. To
+revert entirely:
+
+```bash
+sudo ./dist/ubuntu/ubuntu-direct.sh --uninstall  # removes EFI/ubuntudirect, its hook and entry,
+                                                  # and recreates the stock shim->GRUB "Ubuntu" entry
+```
+
 ### Uninstall
 
 ```bash
@@ -389,6 +450,12 @@ See [CHANGELOG.md](CHANGELOG.md) for what shipped in each tag.
 - Prefer `kexec` for the "real" Ubuntu entry despite the audio caveat above? Change
   its `type` in `boot_entries.json` from `bootnext` to `kexec` with `kernel`/`initrd`/
   `cmdline` set, same as the recovery entry.
+- If [direct Ubuntu boot](#optional-boot-ubuntu-directly-remove-grub-from-the-boot-path)
+  is installed and a kernel update breaks its UKI, the firmware **Ubuntu** entry
+  won't have a GRUB menu to fall back into — use **Craftboot → Extras → "Ubuntu
+  (recovery mode)"** (`kexec`, doesn't need the UKI) instead, then re-run
+  `sudo ./dist/ubuntu/ubuntu-direct.sh install`. The GRUB break-glass command
+  (printed by that script) also still works to get an old-style GRUB entry back.
 
 ---
 
