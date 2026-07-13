@@ -45,7 +45,7 @@ genkey() {
 
 install() {
     [[ -f "$KEYDIR/MOK.key" ]] || { echo "Run 'sudo $0 genkey' first."; exit 1; }
-    if ! mokutil --test-key "$KEYDIR/MOK.der" 2>/dev/null | grep -qi "already enrolled"; then
+    if ! mokutil --test-key "$KEYDIR/MOK.der" 2>&1 | grep -qi "already enrolled"; then
         echo "WARNING: the Craftboot MOK is NOT enrolled yet (checked with mokutil --test-key)."
         echo "Reboot and complete 'Enroll MOK' in the blue MOK Manager screen first."
         echo "Press Enter to build anyway (craftboot won't BOOT until the key is enrolled),"
