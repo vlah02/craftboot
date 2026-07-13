@@ -1,9 +1,8 @@
+build/
+dist/ubuntu/.staged-vmlinuz
+docs/superpowers/
+.superpowers/
 __pycache__/
 *.pyc
-.venv/
-venv/
-boot/build/
 *.img
 *.iso
-.superpowers/
-build/

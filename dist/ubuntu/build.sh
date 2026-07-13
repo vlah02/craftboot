@@ -12,9 +12,13 @@ ROOT="$B/initroot"
 KREL="${1:-$(uname -r)}"
 DEBUG="${DEBUG:-0}"
 
+# A world-readable copy of the kernel is kept next to this script (gitignored),
+# so unprivileged rebuilds survive `make clean` wiping build/.
+STASH="$HERE/.staged-vmlinuz"
+
 mkdir -p "$B"
-if [[ ! -f "$B/vmlinuz" && -f "$REPO/boot/build/vmlinuz" ]]; then
-    cp "$REPO/boot/build/vmlinuz" "$B/vmlinuz"
+if [[ ! -f "$B/vmlinuz" && -f "$STASH" ]]; then
+    cp "$STASH" "$B/vmlinuz"
 fi
 
 make -C "$REPO"
@@ -63,7 +67,11 @@ echo "==> pack (zstd)"
 echo "    $B/craftboot.initrd ($(du -h "$B/craftboot.initrd" | cut -f1))"
 
 if [[ ! -f "$B/vmlinuz" ]]; then
-    cp "/boot/vmlinuz-$KREL" "$B/vmlinuz" && chmod +r "$B/vmlinuz" \
-        || echo "    [!] stage kernel: sudo cp /boot/vmlinuz-$KREL $B/vmlinuz && sudo chmod +r $B/vmlinuz"
+    if cp "/boot/vmlinuz-$KREL" "$B/vmlinuz" 2>/dev/null; then
+        chmod +r "$B/vmlinuz"
+        cp "$B/vmlinuz" "$STASH" 2>/dev/null || true   # self-heal the stash on sudo runs
+    else
+        echo "    [!] stage kernel: sudo cp /boot/vmlinuz-$KREL $B/vmlinuz && sudo chmod +r $B/vmlinuz"
+    fi
 fi
 echo "DONE. Test: ./tools/run-qemu.sh"
