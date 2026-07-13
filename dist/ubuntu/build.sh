@@ -1,0 +1,77 @@
+#!/bin/bash
+# Build the craftboot C initramfs: static binary as /init + assets + kernel modules.
+#   ./dist/ubuntu/build.sh [kernel-version]
+# No sudo needed on a machine with world-readable /lib/modules/*.ko.zst and a
+# staged kernel (see below). If your module files or /boot/vmlinuz-* are
+# root-only, re-run the kernel-staging step with sudo as printed at the end.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
+B="$REPO/build"
+ROOT="$B/initroot"
+KREL="${1:-$(uname -r)}"
+DEBUG="${DEBUG:-0}"
+
+# A world-readable copy of the kernel is kept next to this script (gitignored),
+# so unprivileged rebuilds survive `make clean` wiping build/.
+STASH="$HERE/.staged-vmlinuz"
+
+mkdir -p "$B"
+if [[ ! -f "$B/vmlinuz" && -f "$STASH" ]]; then
+    cp "$STASH" "$B/vmlinuz"
+fi
+
+make -C "$REPO"
+
+if ! rm -rf "$ROOT" 2>/dev/null; then
+    echo "    [!] $ROOT has root-owned leftovers (a previous run used sudo) - retrying with sudo" >&2
+    sudo rm -rf "$ROOT" || echo "    [!] sudo rm -rf also failed; remove $ROOT manually and re-run" >&2
+fi
+mkdir -p "$ROOT"/{dev,proc,sys,mnt,assets}
+
+echo "==> app + assets + config"
+install -m755 "$B/craftboot" "$ROOT/init"
+cp -a "$REPO/assets/." "$ROOT/assets/"
+cp "$REPO/boot_entries.json" "$ROOT/boot_entries.json"
+
+echo "==> kernel modules (resolved + decompressed at build time)"
+mkdir -p "$ROOT/modules"
+: > "$ROOT/modules.list"
+for m in usbhid hid_generic hid_asus i2c_hid_acpi nvme virtio_blk; do
+    # if-guard: a module that doesn't resolve for this kernel must not kill
+    # the whole stage under set -e/pipefail — warn on stderr and keep going.
+    if ! modprobe -S "$KREL" --show-depends "$m" 2>/dev/null | awk '/^insmod/{print $2}'; then
+        echo "    [!] module $m not resolvable for $KREL (skipping)" >&2
+    fi
+done | awk '!seen[$0]++' | while read -r ko; do
+    base="$(basename "$ko")"
+    out="$ROOT/modules/${base%.zst}"; out="${out%.xz}"
+    case "$ko" in
+        *.zst) zstd -qd "$ko" -o "$out" ;;
+        *.xz)  xz -dc "$ko" > "$out" ;;
+        *)     cp "$ko" "$out" ;;
+    esac
+    echo "/modules/$(basename "$out")" >> "$ROOT/modules.list"
+done
+echo "    $(wc -l < "$ROOT/modules.list") modules"
+
+if [[ "$DEBUG" == 1 ]]; then
+    echo "==> DEBUG: busybox shell"
+    mkdir -p "$ROOT/bin"
+    cp /usr/bin/busybox "$ROOT/bin/busybox"
+    ln -sf busybox "$ROOT/bin/sh"
+fi
+
+echo "==> pack (zstd)"
+( cd "$ROOT" && find . | cpio -o -H newc 2>/dev/null | zstd -19 -T0 -q ) > "$B/craftboot.initrd"
+echo "    $B/craftboot.initrd ($(du -h "$B/craftboot.initrd" | cut -f1))"
+
+if [[ ! -f "$B/vmlinuz" ]]; then
+    if cp "/boot/vmlinuz-$KREL" "$B/vmlinuz" 2>/dev/null; then
+        chmod +r "$B/vmlinuz"
+        cp "$B/vmlinuz" "$STASH" 2>/dev/null || true   # self-heal the stash on sudo runs
+    else
+        echo "    [!] stage kernel: sudo cp /boot/vmlinuz-$KREL $B/vmlinuz && sudo chmod +r $B/vmlinuz"
+    fi
+fi
+echo "DONE. Test: ./tools/run-qemu.sh"

@@ -1,5 +1,7 @@
 # craftboot
 
+![CI](https://github.com/vlah02/craftboot/actions/workflows/ci.yml/badge.svg)
+
 A Minecraft-style **graphical boot menu** that boots directly from firmware as its
 own signed UEFI entry, shows a rotating 360° Minecraft title panorama, and hands
 off to **Windows** or **Ubuntu** when you pick a "world".
@@ -9,16 +11,21 @@ perspective panorama (a random Minecraft version each boot, the logo auto-matchi
 the world), grainy Minecraft buttons, pulsing splash text, a "Building terrain"
 loading animation, and a 15-second auto-boot countdown.
 
-> **Status: working on real hardware** (ASUS ROG G713PI, Ubuntu, **Secure Boot ON**).
+> **Status: v2.1, working on real hardware** (ASUS ROG G713PI, Ubuntu, **Secure
+> Boot ON**). One static C binary is `/init`: **179 fps** at 1920×1080, a
+> **12 MB** initramfs (down from 113 MB), first frame in well under a second.
 > Boots as its own firmware entry `Craftboot`, hands off to both OSes seamlessly.
 > Grew out of customizing the [minegrub](https://github.com/Lxtharia/minegrub-theme)
-> GRUB theme; it is now a standalone project.
+> GRUB theme; it is now a standalone project, rewritten from Python/pygame to
+> plain C for M4/M5 (see [CHANGELOG.md](CHANGELOG.md)).
 
 ---
 
 ## Demo
 
-> Rendered by the app itself — the same code path that runs at boot, captured off-screen.
+> Rendered by the app itself — the same code path that runs at boot, captured
+> off-screen from the C renderer (`CRAFTBOOT_SHOT_SEQ`, see
+> [Panorama tunables](#panorama-tunables)).
 
 **Main menu** — navigation and the *Extras* submenu, over a rotating 360° panorama:
 
@@ -43,10 +50,14 @@ loading animation, and a 15-second auto-boot countdown.
 - [Prerequisites](#prerequisites)
 - [Setup, part by part](#setup-part-by-part)
 - [Development loop (QEMU)](#development-loop-qemu)
+- [Testing & CI](#testing--ci)
+- [Versioning](#versioning)
 - [Recovery & fallback](#recovery--fallback)
+- [Contributing: code](#contributing-code)
 - [Contributing: new panoramas](#contributing-new-panoramas)
 - [Contributing: new logos](#contributing-new-logos)
 - [Panorama tunables](#panorama-tunables)
+- [Porting to another distro](#porting-to-another-distro)
 - [Credits & citations](#credits--citations)
 - [License & trademark](#license--trademark)
 
@@ -57,8 +68,9 @@ loading animation, and a 15-second auto-boot countdown.
 GRUB (and every other boot menu) can only draw a *static* image — no panning
 background, no pulsing splash, no animation. To get the real animated Minecraft
 title screen with selectable OS entries, the menu has to be an actual program. So
-craftboot is a tiny Linux userspace app that **is** the boot menu, packed into an
-initramfs on a signed kernel, and it launches the chosen OS itself.
+craftboot is a tiny Linux userspace program that **is** the boot menu, packed into
+an initramfs on a signed kernel as `/init` (PID 1), and it launches the chosen OS
+itself.
 
 ---
 
@@ -71,9 +83,8 @@ UEFI firmware
   └─ EFI/craftboot/shimx64.efi        (Microsoft-signed shim, copied from Ubuntu)
        └─ EFI/craftboot/grubx64.efi   (our UKI: kernel + initramfs + cmdline,
                                         signed with our own MOK key)
-            └─ initramfs /init        (busybox)
-                 └─ python3 /craftboot/main.py --fb --live
-                      └─ kexec Ubuntu  /  efibootmgr BootNext + reboot → Windows
+            └─ initramfs /init        (the craftboot binary itself, PID 1)
+                 └─ menu, then: BootNext + reboot (Windows/Ubuntu) / kexec (recovery)
 ```
 
 - The **UKI** (Unified Kernel Image, built by `systemd-ukify`) bundles Ubuntu's
@@ -81,75 +92,124 @@ UEFI firmware
   cmdline into one PE binary, which we then sign with our **MOK** key.
 - `shim` (Microsoft-signed, so the firmware trusts it) verifies our UKI against
   the MOK — so Secure Boot stays **on**, and Windows/BitLocker are untouched.
-- GRUB/Ubuntu stays a **separate** firmware entry as a permanent fallback.
+- GRUB/Ubuntu stays a **separate** firmware entry as a permanent fallback — or,
+  optionally, that entry can be redirected to boot Ubuntu **directly** via its
+  own signed UKI, taking GRUB out of the path entirely; see
+  [Optional: boot Ubuntu directly](#optional-boot-ubuntu-directly-remove-grub-from-the-boot-path).
 
-### The initramfs
+### The initramfs is one binary
 
-`boot/build.sh` assembles a minimal initramfs containing busybox, the system
-`python3` + stdlib, **pygame** + **numpy** + **SDL2**, USB-HID keyboard modules
-(the ROG internal keyboard is a USB HID device), `nvme`, `kexec`, `efibootmgr`,
-and the app. Its `/init` mounts `proc/sys/dev`, loads the keyboard + disk modules,
-mounts `efivarfs`, mounts the real Ubuntu root **read-only** at `/mnt` (so the app
-can `kexec` its kernel), then launches the app.
+There's no busybox, no shell, no Python interpreter in the release image.
+`dist/ubuntu/build.sh` assembles a minimal initramfs containing exactly:
+the statically-linked `craftboot` binary as `/init`, `/assets`,
+`/boot_entries.json`, a handful of decompressed USB-HID/NVMe kernel modules
+plus `/modules.list`, and (only with `DEBUG=1`) a busybox shell for
+post-mortem debugging.
 
-### Rendering — no GPU, no OpenGL
+`/init` runs as PID 1: it mounts `proc`/`sysfs`/`devtmpfs`/`efivarfs`,
+`finit_module()`s the staged kernel modules directly (no `modprobe`,
+no `kmod` userspace), probes for the real root partition by ext4 UUID under
+`/sys/class/block`, mounts it read-only at `/mnt`, then runs the menu. On any
+failure it `sync()`s and `reboot(RB_AUTOBOOT)`s — there is no path back to a
+dead console (a `DEBUG=1` image drops to `/bin/sh` instead, if present).
 
-The boot environment has no Mesa/GL stack, so the app renders with
-[`app/drmkms.py`](app/drmkms.py): a raw **DRM/KMS dumb buffer** driven by `ctypes`
-ioctls (`SetCrtc` for scanout, `DirtyFB` to flush each frame). pygame renders
-offscreen under the SDL *dummy* video driver; we copy the surface to the KMS
-buffer. Keyboard input is read straight from `/dev/input/event*` via **evdev**.
-The same `--fb` path also works over `/dev/fb0` as a fallback. On the desktop,
-`--windowed` uses a normal SDL window.
+### Rendering — no GPU, no OpenGL, no Python
+
+The boot environment has no Mesa/GL stack and no interpreter, so the app
+renders with [`src/platform/display_drm.c`](src/platform/display_drm.c): a raw
+**DRM/KMS dumb buffer** driven directly by `ioctl()`s (`SetCrtc` for scanout,
+double-buffered page flips with a `DirtyFB` fallback). Keyboard input is read
+straight from `/dev/input/event*` via raw **evdev**, no library. On the
+desktop, `make dev` links the same core against SDL2 instead
+([`src/platform/display_sdl.c`](src/platform/display_sdl.c) /
+[`input_sdl.c`](src/platform/input_sdl.c)) for a fast edit-render loop — the
+menu/scene/panorama code (`src/core/`) is identical either way.
+
+Everything is plain **CPU SIMD**, no GPU: blits, 9-slice buttons, bitmap-font
+text, and the panorama are hand-written fixed-point C with an AVX2 gather fast
+path (`src/core/render.c`), threaded across the frame. Full-res 1920×1080
+panorama: **0.78 ms/frame** (AVX2) vs 1.78 ms/frame scalar — comfortably under
+one frame at the measured **179 fps** on the target hardware. `make bench` and
+`make diff-pano` (byte-identical scalar-vs-AVX2 differential test) cover this.
 
 ### The panorama
 
 The background is a real Minecraft cubemap converted to a seamless
-**equirectangular** strip ([`scripts/build_panorama.py`](scripts/build_panorama.py)),
-then rendered each frame with a **perspective projection**: a per-pixel camera-ray
-→ lat/lon lookup table gathers from the equirect with **bilinear** interpolation,
-and the yaw advances slowly for a smooth 360° rotation with Minecraft's
-characteristic skewed sides. Rendered at a fraction of screen res and
-bilinear-upscaled for speed (CPU-only numpy). See [Panorama tunables](#panorama-tunables).
+**equirectangular** JPEG (q90) ahead of time by
+[`tools/build_panorama.py`](tools/build_panorama.py) — a contributor-only
+script, not part of the boot image — then rendered each frame with a
+**perspective projection**: a per-pixel camera-ray → lat/lon lookup table
+gathers from the equirect with **bilinear** interpolation, and the yaw
+advances slowly for a smooth 360° rotation with Minecraft's characteristic
+skewed sides. See [Panorama tunables](#panorama-tunables).
 
 ### The handoff
 
-The loading screen plays, then control passes straight to the selected OS — a
-smooth handoff either way:
+The loading screen plays, then control passes straight to the selected OS —
+real syscalls, no `kexec-tools`/`efibootmgr` subprocess:
 
-| Target  | Mechanism | |
-|---------|-----------|---|
-| **Ubuntu**  | `kexec -s -l` the real signed kernel + initrd, then `kexec -e` | ✅ seamless |
-| **Windows** | `efibootmgr --bootnext <win>`, then reboot into the Windows Boot Manager | ✅ seamless |
-| **UEFI**    | reboot into firmware setup | — |
+| Target                | Mechanism | |
+|-----------------------|-----------|---|
+| **Ubuntu**            | `efivars` **BootNext** (UCS-2 description match) + `reboot(RB_AUTOBOOT)` | ✅ seamless after firmware re-POST |
+| **Windows**           | `efivars` **BootNext** ("Windows Boot Manager") + `reboot(RB_AUTOBOOT)` | ✅ seamless |
+| **Ubuntu (recovery)** | `kexec_file_load()` the real signed kernel + initrd, then `reboot(LINUX_REBOOT_CMD_KEXEC)` | works, in the *Extras* submenu only |
+| **UEFI**              | `OsIndications` BOOT_TO_FW_UI bit + reboot | reboot into firmware setup |
 
-Handoff is **dry-run** unless the app is launched with `--live` (it is, inside the
-initramfs). On the desktop it uses `sudo`; in the boot env it runs as root.
+Ubuntu's *default* handoff switched from `kexec` to `BootNext` in v2.1: on the
+real ROG G713PI, `kexec`-ing straight into the Ubuntu kernel skips the
+firmware's own ACPI init for the ALC294 speaker amp, leaving it **silently
+dead** until the next full cold boot — `BootNext` lets the firmware re-POST
+normally, so the amp (and anything else ACPI-owned) comes up correctly; `kexec`
+is kept working and wired to "Ubuntu (recovery mode)" in *Extras* since it's
+still the faster path when audio doesn't matter.
+
+Recovery keeps `kexec` rather than `BootNext` for a different reason: `BootNext`
+can only select a firmware entry, which boots that entry's *default* kernel and
+cmdline, while recovery needs a custom cmdline (`recovery nomodeset ...`) —
+only `kexec_file_load()` can hand the kernel a custom cmdline in one click, and
+the ACPI/audio caveat above doesn't matter in a recovery shell anyway.
+
+Handoff is a dry-run unless craftboot is running as PID 1 (`getpid() == 1`);
+pass `--live` to force it, `--dry` to force a dry-run even as init.
 
 ---
 
 ## Repository layout
 
 ```
-app/
-  main.py             the app (pygame): panorama, menu, splash, loading, handoff
-  drmkms.py           raw DRM/KMS dumb-buffer renderer (no GL) + evdev keyboard
-  boot_entries.json   menu structure + your real kernel paths / partition UUIDs
-  assets/
-    panoramas/        the 15 per-version 360° worlds (1.NN[.PP]_name.png)
-    logos/            one wordmark logo per world (minecraft_<name>.png)
-    fonts/            Minecrafter title font (+ license)
-    minecraft.otf     in-game font   |  button*.png  dirt.png  splashes.txt
-boot/
-  build.sh            assemble the initramfs (run with sudo — see gotcha below)
-  uki-setup.sh        genkey / install / --uninstall the firmware entry (MOK+shim+UKI)
-  uki-build.sh        build + sign the UKI for a kernel version
-  rebuild.sh          build.sh + uki-build.sh in one (the dev-deploy command)
-  run-qemu.sh         boot the initramfs in QEMU/OVMF (a graphical window)
-scripts/
-  build_panorama.py   cubemap (6 faces) → equirectangular PNG
-run.sh                desktop dev helper: venv + pygame + run windowed
-requirements.txt      pygame-ce, numpy
+src/
+  core/       render.c/.h (blits, text, panorama+AVX2), assets.c/.h (config/image/font
+              loading), menu.c/.h (state machine + scene draw), version.h
+  platform/   display_drm.c / display_sdl.c, input_evdev.c / input_sdl.c
+              (identical display_t/input_t interface; DRM+evdev ship, SDL is DEV-only)
+  boot/       actions.c/.h — kexec_file_load, BootNext, OsIndications syscalls
+  init/       main.c (PID-1 entrypoint), initlib.c (mounts, module loading, UUID probe)
+  vendor/     stb_image.h, jsmn.h (vendored single-header libs)
+assets/
+  panoramas/        the 15 per-version 360° worlds, JPEG q90 (1.NN[.PP]_name.jpg)
+  logos/            one wordmark logo per world (minecraft_<name>.png) + logo_map.json
+  fonts/baked/       baked bitmap atlases (png + json metrics) built by tools/bake_font.py
+  minecraft.otf, button*.png, dirt.png, splashes.txt
+dist/ubuntu/
+  build.sh          assemble the initramfs (static binary as /init + assets + modules)
+  uki-setup.sh      genkey / install / --uninstall the firmware entry (MOK+shim+UKI)
+  uki-build.sh      build + sign the UKI for a kernel version
+  rebuild.sh        build.sh + uki-build.sh in one (the dev-deploy command)
+  ubuntu-direct.sh  optional: redirect the firmware Ubuntu entry to a direct signed UKI (no GRUB)
+tools/
+  run-qemu.sh          boot the initramfs in QEMU/OVMF (a graphical window)
+  build_panorama.py    cubemap (6 faces) -> equirectangular JPEG (contributor tool)
+  bake_font.py         minecraft.otf -> baked bitmap font atlases (contributor tool)
+  reencode_panoramas.py  one-time PNG->JPEG q90 migration helper
+  make_demo.py         raw CRAFTBOOT_SHOT_SEQ frame dumps -> the README's demo WebPs
+tests/          unit tests (t.h harness, 48 cases across 8 test_*.c files)
+                + bench_pano.c, diff_pano.c, fuzz_parse.c
+.github/
+  workflows/ci.yml     lint, build+test+bench+diff-pano, sanitizers+fuzz, on every PR
+  CODEOWNERS           @vlah02 review required repo-wide
+boot_entries.json     menu structure + your real kernel paths / partition UUIDs
+Makefile        ship / dev / test / bench / diff-pano / test-asan / fuzz
+CHANGELOG.md
 ```
 
 ---
@@ -159,13 +219,17 @@ requirements.txt      pygame-ce, numpy
 Host packages (Ubuntu/Debian names):
 
 ```bash
-# app + panorama tooling
-sudo apt install python3 python3-pygame python3-numpy
-# (or: pip install -r requirements.txt  — pygame-ce + numpy)
+# build the ship binary + initramfs tooling
+sudo apt install build-essential libdrm-dev zstd
 
-# initramfs + boot chain
-sudo apt install busybox-static kmod kexec-tools efibootmgr \
-                 systemd-ukify mokutil
+# make dev (desktop preview binary, SDL2 window)
+sudo apt install libsdl2-dev
+
+# asset tools (contributor-only: panoramas, font baking, demo capture)
+sudo apt install python3-pil          # + numpy for tools/build_panorama.py
+
+# initramfs signing + boot chain
+sudo apt install systemd-ukify mokutil
 
 # QEMU testing (dev loop)
 sudo apt install qemu-system-x86 ovmf
@@ -179,21 +243,23 @@ Ubuntu is installed with **shim** (the standard Secure Boot setup, files under
 
 ## Setup, part by part
 
-> ⚠️ **Always run `boot/build.sh` (and `rebuild.sh`) with `sudo`.** The kernel
-> post-install hook runs it as root, so `boot/build/` ends up root-owned; a later
-> non-root build then fails on `rm -rf`.
-
 ### 1. Clone & configure your machine's values
 
 ```bash
 git clone <your-fork-url> craftboot && cd craftboot
 ```
 
-Edit [`app/boot_entries.json`](app/boot_entries.json) with **your** values:
+Edit [`boot_entries.json`](boot_entries.json) with **your** values:
 - `root_uuid` — your Ubuntu root partition UUID (`findmnt -no UUID /`).
-- `windows_efi_uuid` — the FAT UUID of your Windows EFI (or leave; the Windows
-  entry number is resolved from `efibootmgr` at runtime).
-- the `kernel` / `initrd` / `cmdline` fields for the Ubuntu entries.
+- `windows_efi_uuid` — the FAT UUID of your Windows EFI (currently informational;
+  the Windows entry is resolved by matching "Windows Boot Manager" in `efivars`
+  at runtime).
+- `match` on every `bootnext`-type entry (the checked-in "Ubuntu" entry, and any
+  others you add) — it must equal the firmware boot entry's description
+  **exactly** as `efibootmgr` prints it (e.g. `Ubuntu`, `Windows Boot Manager`).
+  Check yours with `efibootmgr | grep -i ubuntu` (or `| grep -i windows`); the
+  checked-in `"Ubuntu"` is only a guess for a stock Ubuntu installer entry.
+- the `kernel` / `initrd` / `cmdline` fields for the "Ubuntu (recovery mode)" entry.
 
 ### 2. Try it in QEMU first (no risk)
 
@@ -203,7 +269,7 @@ Nothing touches your real boot order yet. Each run picks a random world.
 ### 3. Generate a signing key & enroll it (MOK)
 
 ```bash
-sudo ./boot/uki-setup.sh genkey
+sudo ./dist/ubuntu/uki-setup.sh genkey
 ```
 
 This creates an RSA key in `/var/lib/craftboot/MOK.{key,crt,der}` and starts
@@ -222,7 +288,7 @@ enrollment. Then:
 ### 4. Build, sign & install the firmware entry
 
 ```bash
-sudo ./boot/uki-setup.sh install
+sudo ./dist/ubuntu/uki-setup.sh install
 ```
 
 This builds the initramfs, builds + signs the UKI, copies Ubuntu's shim into
@@ -230,7 +296,29 @@ This builds the initramfs, builds + signs the UKI, copies Ubuntu's shim into
 a kernel post-install hook (`/etc/kernel/postinst.d/zz-craftboot-uki`) that
 rebuilds + re-signs the UKI automatically on every kernel update.
 
-### 5. Make it the default (optional)
+### 5. Make GRUB hand off silently (GRUB pass-through)
+
+Craftboot *is* the interactive menu now, so GRUB shouldn't stop to show its own
+menu on top of it — otherwise you pick Ubuntu twice (once in craftboot, once
+in GRUB). Make GRUB boot straight through instead:
+
+```bash
+sudo sed -i 's/^GRUB_TIMEOUT_STYLE=menu/GRUB_TIMEOUT_STYLE=hidden/; s/^GRUB_TIMEOUT=10/GRUB_TIMEOUT=0/' /etc/default/grub
+sudo update-grub
+```
+
+That `sed` targets stock Ubuntu's default `/etc/default/grub` values
+(`GRUB_TIMEOUT=10`, `GRUB_TIMEOUT_STYLE=menu`) — if yours were already changed,
+just make sure you end up with `GRUB_TIMEOUT=0` and `GRUB_TIMEOUT_STYLE=hidden`,
+then `sudo update-grub`.
+
+> 💡 Need the GRUB menu back — older kernel, recovery, troubleshooting? Hold
+> **Shift**, or tap **Esc**, during the GRUB hand-off to force it to show. A
+> direct firmware **Ubuntu** pick (from the UEFI boot menu, not through
+> craftboot) also boots straight through now — GRUB's interactive theme isn't
+> shown on a normal boot anymore, since craftboot replaced that role.
+
+### 6. Make it the default (optional)
 
 The install adds `Craftboot` first in `BootOrder`. To set the order explicitly:
 
@@ -242,10 +330,68 @@ sudo efibootmgr -o 0007,0001,0000,... # craftboot first, then Ubuntu, Windows, .
 or just reorder it in your UEFI BIOS boot menu. Ubuntu and Windows remain
 **separate** entries.
 
+### Optional: boot Ubuntu directly (remove GRUB from the boot path)
+
+[Step 5](#5-make-grub-hand-off-silently-grub-pass-through) hides GRUB's own
+menu, but GRUB is still technically in the path: shim loads GRUB, GRUB loads
+the Ubuntu kernel. `dist/ubuntu/ubuntu-direct.sh` goes one step further and
+removes GRUB from the path completely, for the firmware **Ubuntu** entry:
+
+```bash
+sudo ./dist/ubuntu/ubuntu-direct.sh install
+```
+
+This builds a **second** signed UKI — Ubuntu's real kernel + Ubuntu's real
+initramfs (not craftboot's) + `root=UUID=... ro quiet splash` — signed with
+the **same** MOK key as craftboot's own entry, copies shim next to it at
+`EFI/ubuntudirect/`, then does firmware-entry surgery: it deletes the existing
+shim→GRUB `Ubuntu` entry and recreates an entry with the **exact same label**
+(`Ubuntu`, so craftboot's `BootNext` handoff keeps matching it unchanged) that
+now points at shim→direct-UKI instead. It also installs a second kernel
+post-install hook (`/etc/kernel/postinst.d/zz-ubuntu-direct`) so this UKI
+rebuilds on every kernel update, alongside craftboot's own hook.
+
+End state: **three** independent firmware entries —
+
+| Entry         | Boots |
+|---------------|-------|
+| **Windows**   | Windows, unchanged |
+| **Ubuntu**    | Ubuntu directly — no GRUB menu, no craftboot |
+| **Craftboot** | the graphical menu (this project) |
+
+GRUB itself is **not removed or purged** — it's left installed but **dormant**:
+no firmware entry points at it anymore, and its files under
+`/boot/efi/EFI/ubuntu/` are untouched. That's a deliberate tradeoff: you get a
+GRUB-free boot chain, but the old GRUB menu (needed for e.g. picking an older
+kernel or advanced boot options) is no longer one keypress away. Two ways
+back:
+
+- **Recovery, no reinstall needed:** boot **Craftboot → Extras → "Ubuntu
+  (recovery mode)"** — that's a `kexec` path straight to the real kernel, it
+  doesn't depend on the direct UKI at all. Use it if a kernel update ever
+  breaks the direct UKI, then re-run `sudo ./dist/ubuntu/ubuntu-direct.sh install`
+  to rebuild it.
+- **Break-glass, get GRUB back as its own entry** (doesn't touch the direct
+  `Ubuntu` entry):
+  ```bash
+  sudo efibootmgr --create --disk <disk> --part <part> --label "Ubuntu (GRUB)" --loader '\EFI\ubuntu\shimx64.efi'
+  ```
+  (`ubuntu-direct.sh install` prints the exact command, with `<disk>`/`<part>`
+  filled in, every time it runs.)
+
+This is **opt-in** and independent of steps 1–6 above; the default,
+GRUB-pass-through setup keeps working if you never run this script. To
+revert entirely:
+
+```bash
+sudo ./dist/ubuntu/ubuntu-direct.sh --uninstall  # removes EFI/ubuntudirect, its hook and entry,
+                                                  # and recreates the stock shim->GRUB "Ubuntu" entry
+```
+
 ### Uninstall
 
 ```bash
-sudo ./boot/uki-setup.sh --uninstall  # removes the entry, ESP files, and hook
+sudo ./dist/ubuntu/uki-setup.sh --uninstall  # removes the entry, ESP files, and hook
 # (the MOK key is kept; to un-enroll: sudo mokutil --delete /var/lib/craftboot/MOK.der)
 ```
 
@@ -253,22 +399,22 @@ sudo ./boot/uki-setup.sh --uninstall  # removes the entry, ESP files, and hook
 
 ## Development loop (QEMU)
 
+Fastest inner loop — no VM, no root, a real SDL window:
+
 ```bash
-# edit app/ ...
-sudo ./boot/build.sh && ./boot/run-qemu.sh     # preview in a QEMU window (random world each run)
+make dev && ./build/craftboot-dev          # dry-run by default; --live / --dry / --assets <dir>
+```
+
+Full loop through the actual initramfs + kernel, in a QEMU window:
+
+```bash
+./dist/ubuntu/build.sh && ./tools/run-qemu.sh   # random world each run
 ```
 
 Once you're happy, deploy to the real signed entry:
 
 ```bash
-sudo ./boot/rebuild.sh && sudo reboot          # rebuild initramfs + re-sign UKI, then boot it
-```
-
-To iterate on just the app visually on your desktop (fast, no VM):
-
-```bash
-./run.sh                    # venv + pygame + windowed
-python3 app/main.py --windowed
+sudo ./dist/ubuntu/rebuild.sh && sudo reboot   # rebuild initramfs + re-sign UKI, then boot it
 ```
 
 > `run-qemu.sh` runs QEMU under `env -i` because a **snap-launched terminal**
@@ -276,76 +422,213 @@ python3 app/main.py --windowed
 
 ---
 
+## Testing & CI
+
+```bash
+make test       # unit tests -> "ALL TESTS PASS": 48 cases across 8 files
+                 # (tests/test_*.c, the tiny t.h harness)
+make bench      # panorama render benchmark; fails the build if slower than
+                 # CRAFTBOOT_BENCH_MAX_MS (default 3.0 ms/frame @ 1920x1080,
+                 # the target-HW regression bar — see tests/bench_pano.c)
+make diff-pano  # scalar-vs-AVX2 panorama render, must be byte-identical
+make test-asan  # the same 48 cases, rebuilt with -fsanitize=address,undefined
+make fuzz       # fuzz-lite of the efivar load-option + boot_entries.json
+                 # parsers under ASan+UBSan (fixed-seed, deterministic)
+```
+
+[GitHub Actions](.github/workflows/ci.yml) runs on every pull request against
+`main` (and on push to `main`, as a post-merge guard) as three jobs:
+
+- **lint scripts + tools** — every `dist/**/*.sh` + `tools/*.sh` installer must
+  parse under `bash -n`, and every `tools/*.py` asset helper must byte-compile
+  (`python3 -m py_compile`), so a syntax error in a load-bearing script is
+  caught in CI instead of shipping silently.
+- **build + test** — the ship (`make`) and dev (`make dev`) builds must be
+  warning-free (`-Wall -Wextra`; CI greps the build log for `warning:` and
+  fails the job if it finds one), the ship binary must be statically linked,
+  then `make test`, `make bench` (gated at **8 ms/frame** here — shared GitHub
+  runners are slower than the ASUS ROG G713PI target hardware, so the CI
+  ceiling is looser than the 3 ms local default; override either with the
+  `CRAFTBOOT_BENCH_MAX_MS` env var), and `make diff-pano`.
+- **sanitizers + fuzz** — `make test-asan` (the full 48-case suite instrumented
+  with AddressSanitizer + UBSan) and `make fuzz`. Both build with
+  `-fno-sanitize-recover=undefined`, so a UBSan trip aborts nonzero and fails
+  the job instead of printing a diagnostic and passing.
+
+Both jobs need an **AVX2-capable runner**: the ship binary is built
+`-march=x86-64-v3` with no runtime scalar fallback, so CI checks
+`/proc/cpuinfo` for `avx2` up front and fails fast if it's missing, rather
+than segfaulting deep into a build.
+
+`main` is branch-protected: a PR needs green CI and a review from
+[@vlah02](.github/CODEOWNERS) (the repo-wide [CODEOWNERS](.github/CODEOWNERS)
+entry) before it can merge.
+
+---
+
+## Versioning
+
+`git describe --tags` is the source of truth, injected at build time
+(`-DCRAFTBOOT_VERSION_GIT`, see the `Makefile`); [`src/core/version.h`](src/core/version.h)'s
+`"v2.1"` is only a fallback for builds outside the Makefile (IDE indexers,
+ad-hoc `gcc` invocations). The footer shows `Craftboot v2.1  179 fps` — an
+untagged/dirty tree shows something like `v2.1-3-gabc1234-dirty`.
+
+To cut a release: tag, then rebuild (the version string is baked in at
+compile time, so existing binaries don't retroactively pick it up).
+
+```bash
+git tag v2.2 && make clean && make && make dev
+```
+
+See [CHANGELOG.md](CHANGELOG.md) for what shipped in each tag.
+
+---
+
 ## Recovery & fallback
 
 - If the `Craftboot` entry ever fails, the firmware **falls through** to the next
   entry — pick **Ubuntu** in the UEFI boot menu.
-- After the app exits (or on error) the initramfs **auto-reboots**, so you never
-  get stuck at a dead console.
+- With [GRUB pass-through](#5-make-grub-hand-off-silently-grub-pass-through) set
+  up, that firmware **Ubuntu** entry (and craftboot's own Ubuntu button) both
+  boot straight through without stopping at GRUB's menu. Hold **Shift**, or tap
+  **Esc**, during the GRUB hand-off if you need the GRUB menu itself (older
+  kernel, advanced options).
+- After `/init` exits (menu quit, handoff failure, any error) the initramfs
+  **auto-reboots** — there's no dead console to get stuck at (a `DEBUG=1` image
+  drops to a busybox shell instead, if one was staged).
 - **Kernel updates** are handled by the post-install hook. If a rebuild ever fails,
-  boot Ubuntu normally and run `sudo ./boot/rebuild.sh`.
+  boot Ubuntu normally and run `sudo ./dist/ubuntu/rebuild.sh`.
+- Prefer `kexec` for the "real" Ubuntu entry despite the audio caveat above? Change
+  its `type` in `boot_entries.json` from `bootnext` to `kexec` with `kernel`/`initrd`/
+  `cmdline` set, same as the recovery entry.
+- If [direct Ubuntu boot](#optional-boot-ubuntu-directly-remove-grub-from-the-boot-path)
+  is installed and a kernel update breaks its UKI, the firmware **Ubuntu** entry
+  won't have a GRUB menu to fall back into — use **Craftboot → Extras → "Ubuntu
+  (recovery mode)"** (`kexec`, doesn't need the UKI) instead, then re-run
+  `sudo ./dist/ubuntu/ubuntu-direct.sh install`. The GRUB break-glass command
+  (printed by that script) also still works to get an old-style GRUB entry back.
+
+---
+
+## Contributing: code
+
+```bash
+make            # ship binary   -> build/craftboot (static, DRM/evdev)
+make dev        # desktop preview -> build/craftboot-dev (SDL2 window)
+make test       # unit tests (tests/, t.h harness) -> "ALL TESTS PASS"
+make bench      # panorama render benchmark
+make diff-pano  # scalar-vs-AVX2 byte-identical differential test
+```
+
+Builds are `-Wall -Wextra` clean — treat any new compiler warning as a bug to
+fix before sending a PR. Distro-specific boot-chain code (initramfs builder,
+signing/enrollment scripts) goes under `dist/<distro>/`, alongside the
+existing `dist/ubuntu/` — see
+[Porting to another distro](#porting-to-another-distro); `src/` itself stays
+distro-agnostic.
+
+All of the above, plus `make test-asan` and `make fuzz`, run in CI on every
+PR — see [Testing & CI](#testing--ci) for exactly what's enforced. Run them
+locally before opening a PR; `main` is branch-protected on green CI.
 
 ---
 
 ## Contributing: new panoramas
 
-Panoramas live in `app/assets/panoramas/` as equirectangular PNGs, **named by
+Panoramas live in `assets/panoramas/` as equirectangular JPEGs (q90), **named by
 Minecraft version so they sort chronologically**:
 
 ```
-1.NN_name.png            e.g. 1.16_nether.png
-1.21.PP_name.png         e.g. 1.21.04_pale_garden.png   (2-digit patch, base = .00)
+1.NN_name.jpg            e.g. 1.16_nether.jpg
+1.21.PP_name.jpg         e.g. 1.21.04_pale_garden.jpg   (2-digit patch, base = .00)
 ```
 
 The 2-digit patch padding (and `.00` for a base release like `1.21.00_tricky_trials`)
 keeps them correctly ordered even under a plain `ls` — otherwise `1.21.11` sorts
 ahead of `1.21.4`.
 
-**To add one:**
+**To add one** — no C changes needed:
 
 1. Get the 6 cubemap faces `panorama_0..5.png` — e.g. from a Minecraft "panorama"
    resource pack (see the [per-version packs on Modrinth](https://modrinth.com/resourcepacks?q=panorama)),
    under `assets/minecraft/textures/gui/title/background/`.
-2. Convert to a seamless equirect:
+2. Convert to a seamless equirect JPEG:
    ```bash
-   python3 scripts/build_panorama.py <faces_dir> app/assets/panoramas/1.NN_name.png 2800 1400
+   python3 tools/build_panorama.py <faces_dir> assets/panoramas/1.NN_name.jpg 2800 1400
    ```
+   (needs `python3-pil` + `numpy`; a contributor-only tool, not shipped in the
+   initramfs.)
 3. Add the logo mapping (next section) so the world gets its wordmark.
 
-A random world is chosen each boot; if none load, the app falls back to a solid fill.
+A random world is chosen each boot (`src/core/menu.c`'s `scene_load`, via
+`getrandom()`); if none load, the app falls back to a solid fill.
 
 ## Contributing: new logos
 
-Each panorama maps **1:1** to a wordmark logo in `app/assets/logos/`, named
-`minecraft_<name>.png` (transparent background). The mapping is an explicit dict
-`LOGO_FOR_BG` at the top of [`app/main.py`](app/main.py), keyed by the panorama's
-**exact stem** (filename without `.png`):
+Each panorama maps **1:1** to a wordmark logo in `assets/logos/`, named
+`minecraft_<name>.png` (transparent background). The mapping is a small JSON
+dict, [`assets/logo_map.json`](assets/logo_map.json), keyed by the panorama's
+**exact stem** (filename without `.jpg`):
 
-```python
-LOGO_FOR_BG = {
-    "1.16_nether":          "minecraft_nether.png",
-    "1.21.04_pale_garden":  "minecraft_garden.png",
-    ...
+```json
+{
+  "1.16_nether":         "minecraft_nether.png",
+  "1.21.04_pale_garden": "minecraft_garden.png"
 }
-CLASSIC_LOGO = "minecraft_classic.png"   # fallback if a world has no entry
 ```
 
-Add your panorama's stem → logo file here. Anything unmapped falls back to
-`minecraft_classic.png`.
+Add your panorama's stem → logo file here (`src/core/menu.c`'s `pick_logo` does
+a plain substring lookup, no JSON library needed for this small a file). Anything
+unmapped falls back to `minecraft_classic.png`.
 
 ---
 
 ## Panorama tunables
 
-At the top of [`app/main.py`](app/main.py):
+Field of view and render resolution are baked into `pano_create()`'s call site
+in [`src/core/menu.c`](src/core/menu.c) (`scene_load`); the rotation speed and
+start angle are in the `yaw` expression in `menu_run`:
 
-| Constant | Meaning |
+| Where | Meaning |
 |---|---|
-| `PANO_FOV` | horizontal field of view (deg); higher = more zoomed-out / skewed sides |
-| `PANO_BLUR` | equirect box-blur radius; `0` = sharp |
-| `PANO_LOOP_SECONDS` | seconds for one full 360° rotation (higher = slower) |
-| `PANO_START` | fixed start angle as a fraction of the turn (0–1) |
-| `PANO_RENDER_SCALE` | render fraction of screen res, then bilinear-upscale. Bilinear sampling is CPU-heavy: `0.5` ≈ 30 fps, `1.0` ≈ 5 fps at 1080p |
+| `pano_create(&eq, w, h, 140.f)` — the `140.f` argument | horizontal field of view (deg); higher = more zoomed-out / skewed sides |
+| `double yaw = 0.7 + (t - t0) / 140.0;` — the `0.7` | fixed start angle, as a fraction of the turn (0–1) |
+| same line — the `/ 140.0` | seconds for one full 360° rotation (higher = slower) |
+| `pano_create(&eq, w, h, ...)` — `w, h` | render resolution; craftboot renders at the full framebuffer size (no downscale-then-upscale step, unlike the old Python renderer) since the AVX2 path is fast enough (0.78 ms/frame at 1920×1080) |
+
+Capturing the README's demos uses the DEV-only env hooks in
+[`src/platform/display_sdl.c`](src/platform/display_sdl.c):
+`CRAFTBOOT_SHOT=path[:N]` dumps one raw XRGB frame after flip `N` then exits;
+`CRAFTBOOT_SHOT_SEQ=dir:first:count` dumps every flip from `first` onward as
+`dir/frame_NNNN.raw` until `count` frames are written, then exits. See
+`tools/make_demo.py` for turning a capture into a WebP.
+
+---
+
+## Porting to another distro
+
+Everything distro-specific lives under `dist/<distro>/` — the core binary
+(`src/`) needs nothing beyond the standard C runtime + libm + pthreads + libdrm
+headers at build time, and *at boot* only what its own initramfs stages. To
+port to another distro, implement `dist/<distro>/build.sh` producing an
+initramfs whose root contains:
+
+- `/init` — the statically-linked `craftboot` binary (`make` in the repo root
+  produces `build/craftboot`; just `install` it as `/init`).
+- `/assets` — a copy of the repo's `assets/` directory.
+- `/boot_entries.json` — your distro's menu config (root UUID, kernel/initrd
+  paths for the recovery `kexec` entry, `bootnext`/`match` strings for the
+  BootNext entries).
+- `/modules.list` — one decompressed `.ko` path per line, matching the target
+  keyboard/storage hardware; `/init` `finit_module()`s each line at boot (see
+  `dist/ubuntu/build.sh` for the module-resolution + zstd/xz decompression
+  pattern using `modprobe -S --show-depends`).
+
+`dist/ubuntu/uki-setup.sh` and `uki-build.sh` (MOK key, `ukify`, shim copy,
+firmware boot entry) are themselves fairly distro-generic — they assume shim +
+systemd, which most Secure-Boot Linux distros ship — but keeping them under
+`dist/ubuntu/` leaves room for a distro with a different signing story.
 
 ---
 
@@ -359,7 +642,7 @@ This is a **fan project** built on Mojang's Minecraft assets.
 - **Panorama worlds:** the per-version 360° cubemaps come from the community
   "*X.Y Panorama with Shaders*" resource-pack series on
   [Modrinth](https://modrinth.com/resourcepacks?q=panorama), converted to
-  equirectangular by `scripts/build_panorama.py`:
+  equirectangular JPEGs by `tools/build_panorama.py`:
 
   | Version | Update | World file | Modrinth pack (slug) |
   |---|---|---|---|
@@ -382,17 +665,22 @@ This is a **fan project** built on Mojang's Minecraft assets.
   Credit to the respective Modrinth pack authors; these packs redistribute Mojang's
   title-screen panoramas.
 - **Minecrafter** title font by **MadPixel** — Creative Commons, non-commercial;
-  shipped with its license (`app/assets/fonts/Minecrafter-License.txt`).
+  shipped with its license (`assets/fonts/Minecrafter-License.txt`).
 - **Button sprites** (`button.png` / `button_highlighted.png`), the in-game font
   (`minecraft.otf`), and `dirt.png` are Mojang's default GUI assets, bundled for
   personal use.
-- **Logos** (`app/assets/logos/`) are per-update Minecraft wordmarks, created with
+- **Logos** (`assets/logos/`) are per-update Minecraft wordmarks, created with
   the **EaseCation 3D Text generator** ([3dtext.easecation.net](https://3dtext.easecation.net/)).
+- **Vendored libraries:** [`stb_image.h`](https://github.com/nothings/stb) by
+  Sean Barrett (public domain / MIT) for JPEG/PNG decoding, and
+  [`jsmn.h`](https://github.com/zserge/jsmn) by Serge Zaitsev (MIT) for parsing
+  `boot_entries.json` — both vendored, single-header, under `src/vendor/`
+  (see [`src/vendor/README.md`](src/vendor/README.md)).
 
 ## License & trademark
 
-The **code** in this repository (`app/*.py`, `boot/*.sh`, `scripts/*.py`) is
-released under the **MIT License** — do what you like with it.
+The **code** in this repository (`src/`, `dist/`, `tools/`, `tests/`, `Makefile`)
+is released under the **MIT License** — do what you like with it.
 
 The **bundled assets are NOT covered by that license**: Minecraft, its fonts,
 textures, panoramas, and wordmarks are property of **Mojang Studios / Microsoft**
