@@ -110,3 +110,27 @@ jobs:
 
       - name: Fuzz-lite parsers (efivar load-option + config) under ASan + UBSan
         run: make fuzz
+
+  efi-build:
+    name: efi app build (warning-free PE32+)
+    runs-on: ubuntu-latest
+    # OVMF/QEMU boot is NOT exercised here (flaky in CI) -- it's a local gate
+    # via tools/run-qemu-efi.sh. This job only proves `make efi` is
+    # warning-free and produces a real PE32+ EFI application.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # tags, so `git describe` yields the real version
+
+      - name: Install mingw cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Build EFI app (must be warning-free)
+        run: |
+          make efi 2>&1 | tee build-efi.log
+          ! grep -qi 'warning:' build-efi.log
+
+      - name: Confirm PE32+ EFI application
+        run: file build/craftboot.efi | grep -q 'PE32+'
