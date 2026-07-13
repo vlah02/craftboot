@@ -68,6 +68,50 @@ static int bootnum_from_name(void) {
     return 0;
 }
 
+static int bootnext_value_bytes(void) {
+    unsigned char out[6];
+    build_bootnext_value(0x0001, out);
+    unsigned char want1[6] = {0x07,0x00,0x00,0x00,0x01,0x00};
+    OK(memcmp(out, want1, 6) == 0);
+
+    build_bootnext_value(0x1234, out);
+    unsigned char want2[6] = {0x07,0x00,0x00,0x00,0x34,0x12};
+    OK(memcmp(out, want2, 6) == 0);
+    return 0;
+}
+
+static int osindications_fresh_value(void) {
+    unsigned char out[12];
+    OK(build_osindications_value(NULL, 0, out) == 0);
+    unsigned char want[12] = {0x07,0x00,0x00,0x00,0x01,0,0,0,0,0,0,0};
+    OK(memcmp(out, want, 12) == 0);
+
+    /* too-short existing buffer is also treated as fresh/zero */
+    unsigned char short_existing[4] = {0xFF,0xFF,0xFF,0xFF};
+    OK(build_osindications_value(short_existing, sizeof short_existing, out) == 0);
+    OK(memcmp(out, want, 12) == 0);
+    return 0;
+}
+
+static int osindications_preserves_existing_bits(void) {
+    /* Existing efivarfs contents: attrs (bytes 0..3, ignored/overwritten)
+     * and a u64 value (bytes 4..11) that already has bit 0x10 set plus some
+     * high bytes -- those must survive, with only bit 0x01 OR'd in and the
+     * attrs forced to ATTRS (07 00 00 00). */
+    unsigned char existing[12] = {
+        0x00,0x00,0x00,0x00,        /* stale/garbage attrs -- must be overwritten */
+        0x10, 0xAA,0xBB,0xCC,0xDD,0xEE,0xFF,0x01
+    };
+    unsigned char out[12];
+    OK(build_osindications_value(existing, sizeof existing, out) == 0);
+    unsigned char want[12] = {
+        0x07,0x00,0x00,0x00,
+        0x11, 0xAA,0xBB,0xCC,0xDD,0xEE,0xFF,0x01
+    };
+    OK(memcmp(out, want, 12) == 0);
+    return 0;
+}
+
 int main(void) {
     RUN(ucs2_match);
     RUN(parses_load_option);
@@ -76,5 +120,8 @@ int main(void) {
     RUN(load_option_rejects_too_small_output);
     RUN(load_option_rejects_non_ascii);
     RUN(bootnum_from_name);
+    RUN(bootnext_value_bytes);
+    RUN(osindications_fresh_value);
+    RUN(osindications_preserves_existing_bits);
     return 0;
 }

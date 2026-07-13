@@ -96,6 +96,37 @@ int efi_bootnum_from_name(const char *name, unsigned *out) {
     return 1;
 }
 
+/* Builds the 6-byte efivarfs content for BootNext: 4 bytes of attributes
+ * (ATTRS, LE) followed by the u16 boot number (LE). Pure/testable -- no I/O. */
+void build_bootnext_value(unsigned num, unsigned char out[6]) {
+    out[0] = (unsigned char)(ATTRS & 0xff);
+    out[1] = (unsigned char)(ATTRS >> 8 & 0xff);
+    out[2] = (unsigned char)(ATTRS >> 16 & 0xff);
+    out[3] = (unsigned char)(ATTRS >> 24 & 0xff);
+    out[4] = (unsigned char)(num & 0xff);
+    out[5] = (unsigned char)(num >> 8 & 0xff);
+}
+
+/* Builds the 12-byte efivarfs content for OsIndications: 4 bytes of
+ * attributes (ATTRS, LE) followed by the u64 OsIndications value (LE), with
+ * EFI_OS_INDICATIONS_BOOT_TO_FW_UI (bit 0) forced on. Read-modify-write: if
+ * `existing` holds a prior efivarfs value of at least 12 bytes, its u64
+ * portion (bytes 4..11) is preserved and only bit 0x01 of the low byte is
+ * OR'd in -- other firmware/OS-set indicator bits must survive untouched.
+ * `existing == NULL` (or too short) is treated as a fresh zero value. Pure/
+ * testable -- no I/O. */
+int build_osindications_value(const unsigned char *existing, size_t n,
+                               unsigned char out[12]) {
+    memset(out, 0, 12);
+    if (existing && n >= 12) memcpy(out + 4, existing + 4, 8);
+    out[0] = (unsigned char)(ATTRS & 0xff);
+    out[1] = (unsigned char)(ATTRS >> 8 & 0xff);
+    out[2] = (unsigned char)(ATTRS >> 16 & 0xff);
+    out[3] = (unsigned char)(ATTRS >> 24 & 0xff);
+    out[4] |= 0x01;   /* EFI_OS_INDICATIONS_BOOT_TO_FW_UI, low bit of the u64 at offset 4 */
+    return 0;
+}
+
 /* ---- efivarfs plumbing ---- */
 
 /* efivarfs marks NVRAM variables immutable (chattr +i) by default; clear it
@@ -148,11 +179,8 @@ static int set_bootnext(unsigned num) {
     rw_immutable_off(p);
     int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) { perror("[craftboot] BootNext open"); return -1; }
-    unsigned char v[6] = {
-        (unsigned char)(ATTRS & 0xff), (unsigned char)(ATTRS >> 8 & 0xff),
-        (unsigned char)(ATTRS >> 16 & 0xff), (unsigned char)(ATTRS >> 24 & 0xff),
-        (unsigned char)(num & 0xff), (unsigned char)(num >> 8 & 0xff)
-    };
+    unsigned char v[6];
+    build_bootnext_value(num, v);
     int ok = write(fd, v, sizeof v) == (ssize_t)sizeof v;
     if (!ok) perror("[craftboot] BootNext write");
     close(fd);
@@ -162,17 +190,15 @@ static int set_bootnext(unsigned num) {
 static int set_boot_to_fw(void) {
     char p[256];
     snprintf(p, sizeof p, EFIVARS "/OsIndications-" EFI_GLOBAL);
-    unsigned char v[12] = {0};
+    unsigned char existing[12] = {0};
+    size_t n = 0;
     FILE *f = fopen(p, "rb");
     if (f) {
-        if (fread(v, 1, sizeof v, f) < sizeof v) memset(v, 0, sizeof v);
+        n = fread(existing, 1, sizeof existing, f);
         fclose(f);
     }
-    v[0] = (unsigned char)(ATTRS & 0xff);
-    v[1] = (unsigned char)(ATTRS >> 8 & 0xff);
-    v[2] = (unsigned char)(ATTRS >> 16 & 0xff);
-    v[3] = (unsigned char)(ATTRS >> 24 & 0xff);
-    v[4] |= 0x01;   /* EFI_OS_INDICATIONS_BOOT_TO_FW_UI, low bit of the u64 at offset 4 */
+    unsigned char v[12];
+    build_osindications_value(n >= sizeof existing ? existing : NULL, n, v);
     rw_immutable_off(p);
     int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) { perror("[craftboot] OsIndications open"); return -1; }

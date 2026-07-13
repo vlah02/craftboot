@@ -74,9 +74,62 @@ static int nineslice_narrow_sprite_safe(void) {
     OK((big[48 * 64 + 25] >> 8 & 0xff) > 100);
     return 0;
 }
+/* blit()/put_rgba() must clip per-pixel: negative coords, a sprite that
+ * straddles the framebuffer edge, and one placed entirely off-screen must
+ * all be safe (no OOB read/write) and must leave out-of-bounds framebuffer
+ * pixels untouched. This is the memory-safety surface exercised under ASan
+ * in CI (tests/fuzz_parse.c and the sanitizer CI job). */
+static int blit_bounds_safety(void) {
+    /* 4x4 opaque sprite, each pixel a distinct color so mapping is checkable */
+    uint8_t px[4 * 4 * 4];
+    for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 4; i++) {
+            uint8_t *p = &px[(j * 4 + i) * 4];
+            p[0] = p[1] = p[2] = (uint8_t)((j * 4 + i + 1) * 15);
+            p[3] = 255;
+        }
+    img_t s = { px, 4, 4 };
+    uint32_t sentinel = 0x445566;
+
+    /* negative coords: only sprite pixel (3,3) lands in-bounds at fb (0,0) */
+    fb_fill(&fb, sentinel);
+    blit(&fb, &s, -3, -3);
+    uint32_t c33 = px[(3 * 4 + 3) * 4] * 0x010101u;
+    OK(buf[0] == c33);
+    OK(buf[1] == sentinel && buf[64] == sentinel);
+
+    /* partially past the right edge: columns 0-1 visible, 2-3 clipped */
+    fb_fill(&fb, sentinel);
+    blit(&fb, &s, fb.w - 2, 0);
+    uint32_t c00 = px[0] * 0x010101u, c10 = px[1 * 4] * 0x010101u;
+    OK(buf[fb.w - 2] == c00);
+    OK(buf[fb.w - 1] == c10);
+    OK(buf[1] == sentinel);   /* untouched elsewhere */
+
+    /* fully off-screen: no visible pixel changes, no crash */
+    fb_fill(&fb, sentinel);
+    blit(&fb, &s, fb.w + 50, 0);
+    OK(buf[0] == sentinel && buf[64 * 64 - 1] == sentinel);
+    blit(&fb, &s, -50, -50);
+    OK(buf[0] == sentinel && buf[64 * 64 - 1] == sentinel);
+    return 0;
+}
+
+static int fill_rect_straddles_edge(void) {
+    fb_fill(&fb, 0);
+    /* rect from (-2,-2) sized 68x68 covers the whole 64x64 fb and overflows
+     * every edge; must clip cleanly (no OOB write) and fill everything visible */
+    fill_rect(&fb, -2, -2, 68, 68, 0xABCDEF);
+    OK(buf[0] == 0xABCDEF);
+    OK(buf[64 * 64 - 1] == 0xABCDEF);
+    OK(buf[32 * 64 + 32] == 0xABCDEF);
+    return 0;
+}
+
 int main(void) {
     RUN(mix_endpoints); RUN(fill_and_rect); RUN(alpha_blit);
     RUN(scale_solid_stays_solid); RUN(rotate_keeps_content); RUN(loads_repo_png);
     RUN(nineslice_narrow_sprite_safe);
+    RUN(blit_bounds_safety); RUN(fill_rect_straddles_edge);
     return 0;
 }

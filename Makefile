@@ -60,5 +60,40 @@ diff-pano: $(CORE) $(B)/display_drm.o $(B)/input_evdev.o
 	cmp $(B)/frames_scalar.bin $(B)/frames_avx2.bin && echo "DIFF-PANO: byte-identical"
 .PHONY: diff-pano
 
+# ---- sanitizer + fuzz builds --------------------------------------------
+# Separate object namespace (asan_*) built straight from source with
+# -fsanitize=address,undefined, so every translation unit under test carries
+# sanitizer instrumentation (stack/global bounds checks included, not just
+# the heap redzones an uninstrumented .o would still get for free via the
+# intercepted malloc). -O1 keeps ASan's stack-use-after-return checks and
+# backtraces meaningful without the -O3 vectorized codegen path diverging
+# too far from what's actually shipped.
+ASAN_CFLAGS := $(CFLAGS) -O1 -g -fsanitize=address,undefined
+ASAN_CORE   := $(B)/asan_render.o $(B)/asan_assets.o $(B)/asan_menu.o
+
+$(B)/asan_%.o: src/core/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
+$(B)/asan_%.o: src/platform/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
+$(B)/asan_%.o: src/boot/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
+$(B)/asan_%.o: src/init/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
+
+ASAN_TESTS := $(patsubst tests/%.c,$(B)/asan_%,$(wildcard tests/test_*.c))
+$(B)/asan_test_%: tests/test_%.c $(ASAN_CORE) $(B)/asan_actions.o $(B)/asan_display_drm.o $(B)/asan_input_evdev.o $(B)/asan_initlib.o
+	@mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
+
+# detect_leaks=0: the test harness loads font/image atlases (see
+# tests/test_text.c, tests/test_menu.c) that live for the process lifetime
+# and are never explicitly freed -- a known, harmless non-defect in test
+# code, not a real leak in shipped code. Everything else (heap/stack/global
+# overflow, UB) stays fully enforced.
+test-asan: $(ASAN_TESTS)
+	@for t in $(ASAN_TESTS); do ASAN_OPTIONS=detect_leaks=0 ./$$t || exit 1; done; echo "ALL ASAN TESTS PASS"
+.PHONY: test-asan
+
+fuzz: $(B)/fuzz_parse
+$(B)/fuzz_parse: tests/fuzz_parse.c $(B)/asan_assets.o $(B)/asan_actions.o $(B)/asan_initlib.o
+	@mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
+	ASAN_OPTIONS=detect_leaks=0 ./$@
+.PHONY: fuzz
+
 clean: ; -rm -rf $(B)
 .PHONY: all dev test clean bench
