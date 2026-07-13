@@ -73,6 +73,28 @@ static int countdown_expiry_clamps_to_zero(void) {
     OK(m.countdown < 0);             /* cancel is sticky */
     return 0;
 }
+static int default_entry_skips_nonbootable(void) {
+    /* highlight the Extras submenu (index 2, non-bootable): auto-boot must
+     * fall through to the first bootable entry, not return the submenu. */
+    menustate_t m; ms_init(&m, &cfg);
+    m.index = 2;                                  /* Extras (E_SUBMENU) */
+    const entry_t *d = ms_default_entry(&m);
+    OK(d && d->type == E_WINDOWS);                /* first bootable = index 0 */
+    OK(d == &cfg.menu[0][0]);
+    return 0;
+}
+static int default_entry_none_bootable(void) {
+    /* a menu with no bootable entry at all must yield NULL, not a stray
+     * pointer -- menu_run would otherwise auto-boot garbage on expiry. */
+    config_t c = {0};
+    c.nmenu[0] = 2;
+    c.menu[0][0] = (entry_t){ .type = E_INFO };
+    c.menu[0][1] = (entry_t){ .type = E_SUBMENU };
+    menustate_t m; ms_init(&m, &c);
+    m.index = 0;
+    OK(ms_default_entry(&m) == NULL);
+    return 0;
+}
 static int empty_menu_safe(void) {
     config_t empty = {0};
     strcpy(empty.root_uuid, "c36a4c56-487b-4aee-946b-f7fa2dc7f001");
@@ -91,4 +113,5 @@ int main(void) { setup(); RUN(nav_wraps); RUN(submenu_and_back);
                  RUN(select_returns_bootable); RUN(bootnext_is_default_bootable);
                  RUN(countdown_and_default);
                  RUN(move_large_delta_safe); RUN(countdown_expiry_clamps_to_zero);
+                 RUN(default_entry_skips_nonbootable); RUN(default_entry_none_bootable);
                  RUN(empty_menu_safe); return 0; }

@@ -10,7 +10,10 @@ see [README.md#versioning](README.md#versioning)).
 Landed after the `v2.1` tag; kept here until the next tag cuts a release.
 
 ### Added
-- **CI**: GitHub Actions (`.github/workflows/ci.yml`) — a `build + test` job
+- **CI**: GitHub Actions (`.github/workflows/ci.yml`) — a `lint scripts +
+  tools` job (`bash -n` on every `dist/**/*.sh` + `tools/*.sh`, `py_compile`
+  on every `tools/*.py`, so a syntax error in a load-bearing installer/asset
+  helper is caught instead of shipping silently), a `build + test` job
   (warning-free ship + dev build, static-link check, `make test`, `make bench`
   perf gate, `make diff-pano` scalar-vs-AVX2 differential) and a
   `sanitizers + fuzz` job (`make test-asan` = the full suite under
@@ -27,12 +30,22 @@ Landed after the `v2.1` tag; kept here until the next tag cuts a release.
   both still reach it if a kernel update ever breaks the direct UKI.
 
 ### Changed
-- Test coverage expanded to **39 cases across 8 files**: an ext4-UUID root
+- Test coverage expanded to **48 cases across 8 files**: an ext4-UUID root
   probe suite (`tests/test_uuid.c`), efivar value-builder tests (BootNext /
   OsIndications byte layout, `tests/test_actions.c`), blit bounds-safety tests
   (`tests/test_blit.c`), and a fixed-seed fuzz-lite harness
   (`tests/fuzz_parse.c`) hammering the efivar load-option and
-  `boot_entries.json` parsers under ASan+UBSan.
+  `boot_entries.json` parsers under ASan+UBSan. The latest round adds
+  `action_execute()` dry-run dispatch + kexec root-path assembly, the
+  `config_load()` 8-entry cap, `ms_default_entry()` fall-through when the
+  highlighted entry is non-bootable (and the no-bootable NULL case), and
+  degenerate render inputs (empty/over-long `text_render`, zero-width
+  `img_scaled`, non-16:9 panorama, per-channel `mix_xrgb`).
+- **CI sanitizer gate made actually-blocking**: the ASan/UBSan builds now
+  compile with `-fno-sanitize-recover=undefined`. UBSan defaults to
+  recoverable mode — it printed a `runtime error:` line on undefined behavior
+  but exited 0, so `make test-asan` / `make fuzz` would have stayed green
+  through a real UB regression. The flag makes any UB trip abort nonzero.
 - Menu polish: the footer now shows a live, smoothed fps reading immediately
   instead of a blank first few frames; the panorama's splash rotation
   direction was corrected to match Minecraft's own title screen.

@@ -68,7 +68,14 @@ diff-pano: $(CORE) $(B)/display_drm.o $(B)/input_evdev.o
 # intercepted malloc). -O1 keeps ASan's stack-use-after-return checks and
 # backtraces meaningful without the -O3 vectorized codegen path diverging
 # too far from what's actually shipped.
-ASAN_CFLAGS := $(CFLAGS) -O1 -g -fsanitize=address,undefined
+# -fno-sanitize-recover=undefined is load-bearing for CI: UBSan defaults to
+# "recoverable" mode -- on a UB event it prints a "runtime error:" line and
+# KEEPS GOING with exit code 0, so `make test-asan` / `make fuzz` would stay
+# GREEN through a real undefined-behavior regression. Baking no-recover into
+# the binary makes any UB trip abort with a nonzero exit (can't be bypassed by
+# a missing env var), so the sanitizer gate is actually blocking. (ASan
+# already aborts nonzero on its own errors; this only fixes UBSan.)
+ASAN_CFLAGS := $(CFLAGS) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
 ASAN_CORE   := $(B)/asan_render.o $(B)/asan_assets.o $(B)/asan_menu.o
 
 $(B)/asan_%.o: src/core/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@

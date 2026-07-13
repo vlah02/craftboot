@@ -46,4 +46,19 @@ static int center_maps_to_yaw_column(void) {
     pano_destroy(p); free(s.rgba);
     return 0;
 }
-int main(void) { RUN(uniform_in_uniform_out); RUN(yaw_wraps_full_turn); RUN(center_maps_to_yaw_column); return 0; }
+static int uniform_square_output(void) {
+    /* non-16:9 output (square) exercises the vertical-FOV term tv = th*h/w at
+     * an aspect the other cases don't cover; a uniform source must still map
+     * to a uniform frame with no row-clamp artifacts. 64 is a multiple of 8
+     * so every row is pure AVX2 body (no scalar tail). */
+    img_t s = { malloc(200 * 100 * 4), 200, 100 };
+    for (long i = 0; i < 200 * 100; i++) memcpy(&s.rgba[i * 4], "\x22\x44\x88\xff", 4);
+    pano_t *p = pano_create(&s, 64, 64, 100.f);
+    uint32_t buf[64 * 64]; fb_t fb = { buf, 64, 64 };
+    pano_render(p, &fb, 0.5);
+    for (int i = 0; i < 64 * 64; i++) OK(buf[i] == 0x224488);
+    pano_destroy(p); free(s.rgba);
+    return 0;
+}
+int main(void) { RUN(uniform_in_uniform_out); RUN(yaw_wraps_full_turn);
+                 RUN(center_maps_to_yaw_column); RUN(uniform_square_output); return 0; }

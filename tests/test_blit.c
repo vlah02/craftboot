@@ -10,6 +10,16 @@ static int mix_endpoints(void) {
     OK(mix_xrgb(0x000000, 0x0000FF, 128) == 0x00007F);
     return 0;
 }
+static int mix_channels_independent(void) {
+    /* R/G/B must interpolate independently -- a wrong channel mask would let
+     * one channel bleed into another. Endpoints chosen so each midpoint is
+     * unambiguous. */
+    uint32_t m = mix_xrgb(0x102030, 0x40A0F0, 128);
+    OK((int)(m >> 16 & 0xff) >= 0x27 && (int)(m >> 16 & 0xff) <= 0x29);  /* (0x10+0x40)/2 */
+    OK((int)(m >>  8 & 0xff) >= 0x5f && (int)(m >>  8 & 0xff) <= 0x61);  /* (0x20+0xA0)/2 */
+    OK((int)(m       & 0xff) >= 0x8f && (int)(m       & 0xff) <= 0x91);  /* (0x30+0xF0)/2 */
+    return 0;
+}
 static int fill_and_rect(void) {
     fb_fill(&fb, 0x112233);
     OK(buf[0] == 0x112233 && buf[64*64-1] == 0x112233);
@@ -46,6 +56,18 @@ static int rotate_keeps_content(void) {
     long acc = 0; for (int i = 0; i < r.w*r.h; i++) acc += r.rgba[i*4+3];
     OK(acc > 0);                                   /* alpha survived rotation */
     img_free(&r);
+    return 0;
+}
+static int img_scaled_degenerate_safe(void) {
+    uint8_t px[4 * 4] = { 10,20,30,255, 40,50,60,255, 70,80,90,255, 100,110,120,255 };
+    img_t s = { px, 2, 2 };
+    img_t z = img_scaled(&s, 0, 0);           /* zero-size: no alloc/loop OOB */
+    OK(z.w == 0 && z.h == 0);
+    img_free(&z);
+    img_t col = img_scaled(&s, 1, 8);         /* 1px-wide degenerate column */
+    OK(col.w == 1 && col.h == 8);
+    OK(col.rgba[3] == 255 && col.rgba[(8 * 1 - 1) * 4 + 3] == 255);
+    img_free(&col);
     return 0;
 }
 static int loads_repo_png(void) {
@@ -127,8 +149,10 @@ static int fill_rect_straddles_edge(void) {
 }
 
 int main(void) {
-    RUN(mix_endpoints); RUN(fill_and_rect); RUN(alpha_blit);
-    RUN(scale_solid_stays_solid); RUN(rotate_keeps_content); RUN(loads_repo_png);
+    RUN(mix_endpoints); RUN(mix_channels_independent);
+    RUN(fill_and_rect); RUN(alpha_blit);
+    RUN(scale_solid_stays_solid); RUN(img_scaled_degenerate_safe);
+    RUN(rotate_keeps_content); RUN(loads_repo_png);
     RUN(nineslice_narrow_sprite_safe);
     RUN(blit_bounds_safety); RUN(fill_rect_straddles_edge);
     return 0;

@@ -42,4 +42,21 @@ static int escaped_glyphs_distinct(void) {
     OK(text_width(&f, "\"") > 0);
     return 0;
 }
-int main(void) { RUN(load_and_measure); RUN(draws_pixels); RUN(renders_to_img); RUN(escaped_glyphs_distinct); return 0; }
+/* text_render() sizes its scratch buffers from text_width()+outline; the
+ * degenerate empty string and an over-long string must both produce a valid
+ * image with no under-allocation (checked under ASan in test-asan/CI). */
+static int renders_edge_strings(void) {
+    font_t f;
+    OK(font_load(&f, "assets/fonts/baked/splash.png", "assets/fonts/baked/splash.json") == 0);
+    img_t empty = text_render(&f, "", 0xFFFFFF, 2);
+    OK(empty.rgba && empty.w > 0 && empty.h > 0);   /* width = just the outline pad */
+    char big[513]; memset(big, 'W', 512); big[512] = 0;
+    img_t lng = text_render(&f, big, 0xFFFF00, 2);
+    OK(lng.rgba && lng.w > empty.w);
+    long a = 0; for (int i = 0; i < lng.w * lng.h; i++) a += lng.rgba[i * 4 + 3];
+    OK(a > 0);                                       /* the long string drew ink */
+    img_free(&empty); img_free(&lng);
+    return 0;
+}
+int main(void) { RUN(load_and_measure); RUN(draws_pixels); RUN(renders_to_img);
+                 RUN(escaped_glyphs_distinct); RUN(renders_edge_strings); return 0; }

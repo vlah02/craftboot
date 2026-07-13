@@ -1,5 +1,6 @@
 #include "t.h"
 #include "boot/actions.h"
+#include <unistd.h>
 
 static int ucs2_match(void) {
     unsigned char w[] = { 'W',0,'i',0,'n',0,0,0 };
@@ -112,6 +113,79 @@ static int osindications_preserves_existing_bits(void) {
     return 0;
 }
 
+/* Run action_execute() in DRY-RUN (live=0) with stderr redirected to a
+ * tmpfile, returning the captured diagnostics in `log` and the rc via *rc.
+ * Dry-run performs no syscalls/reboots and never enters the menu again, so
+ * this exercises the real dispatch + path-assembly logic hardware-free. */
+static int run_dry(const entry_t *e, const char *root, int *rc,
+                   char *log, size_t logcap) {
+    FILE *tmp = tmpfile();
+    if (!tmp) return -1;
+    fflush(stderr);
+    int saved = dup(fileno(stderr));
+    if (saved < 0 || dup2(fileno(tmp), fileno(stderr)) < 0) { fclose(tmp); return -1; }
+    *rc = action_execute(e, root, 0);
+    fflush(stderr);
+    dup2(saved, fileno(stderr));
+    close(saved);
+    rewind(tmp);
+    size_t n = fread(log, 1, logcap - 1, tmp);
+    log[n] = 0;
+    fclose(tmp);
+    return 0;
+}
+
+static int dry_run_dispatch_return_codes(void) {
+    entry_t e;
+    char log[2048]; int rc;
+
+    /* E_UEFI dry-run: prints plan, returns 0 (no OsIndications write). */
+    memset(&e, 0, sizeof e); e.type = E_UEFI;
+    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
+
+    /* E_INFO (and other non-handoff types) return 0. */
+    memset(&e, 0, sizeof e); e.type = E_INFO;
+    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
+
+    /* E_WINDOWS dry-run returns 0 regardless of whether the firmware has a
+     * "Windows Boot Manager" load option (the match only gates a live boot). */
+    memset(&e, 0, sizeof e); e.type = E_WINDOWS; strcpy(e.label, "Windows");
+    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
+
+    /* E_BOOTNEXT with a match string: dry-run returns 0. */
+    memset(&e, 0, sizeof e); e.type = E_BOOTNEXT;
+    strcpy(e.label, "Ubuntu"); strcpy(e.match, "NoSuchLoadOption_craftboot_test");
+    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
+
+    /* E_BOOTNEXT with NO match string is a config error: -1 even in dry-run. */
+    memset(&e, 0, sizeof e); e.type = E_BOOTNEXT; strcpy(e.id, "broken");
+    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == -1);
+    OK(strstr(log, "no match string") != NULL);
+    return 0;
+}
+
+static int kexec_root_prefixes_paths(void) {
+    /* E_KEXEC dry-run must join root_prefix + kernel/initrd exactly ("%s%s")
+     * and echo the assembled paths -- the root prefix is what makes the
+     * on-disk /boot/... paths resolve once the real root is mounted at /mnt. */
+    entry_t e; memset(&e, 0, sizeof e);
+    e.type = E_KEXEC;
+    strcpy(e.label, "Recovery"); strcpy(e.id, "rec");
+    strcpy(e.kernel, "/boot/vmlinuz");
+    strcpy(e.initrd, "/boot/initrd.img");
+    strcpy(e.cmdline, "ro quiet");
+    char log[2048]; int rc;
+    OK(run_dry(&e, "/mnt", &rc, log, sizeof log) == 0);
+    OK(rc == 0);
+    OK(strstr(log, "kernel=/mnt/boot/vmlinuz") != NULL);
+    OK(strstr(log, "initrd=/mnt/boot/initrd.img") != NULL);
+    OK(strstr(log, "cmdline=ro quiet") != NULL);
+    /* empty root prefix leaves the path unchanged */
+    OK(run_dry(&e, "", &rc, log, sizeof log) == 0);
+    OK(strstr(log, "kernel=/boot/vmlinuz") != NULL);
+    return 0;
+}
+
 int main(void) {
     RUN(ucs2_match);
     RUN(parses_load_option);
@@ -123,5 +197,7 @@ int main(void) {
     RUN(bootnext_value_bytes);
     RUN(osindications_fresh_value);
     RUN(osindications_preserves_existing_bits);
+    RUN(dry_run_dispatch_return_codes);
+    RUN(kexec_root_prefixes_paths);
     return 0;
 }

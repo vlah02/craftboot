@@ -202,10 +202,10 @@ tools/
   bake_font.py         minecraft.otf -> baked bitmap font atlases (contributor tool)
   reencode_panoramas.py  one-time PNG->JPEG q90 migration helper
   make_demo.py         raw CRAFTBOOT_SHOT_SEQ frame dumps -> the README's demo WebPs
-tests/          unit tests (t.h harness, 39 cases across 8 test_*.c files)
+tests/          unit tests (t.h harness, 48 cases across 8 test_*.c files)
                 + bench_pano.c, diff_pano.c, fuzz_parse.c
 .github/
-  workflows/ci.yml     build+test+bench+diff-pano and sanitizers+fuzz, on every PR
+  workflows/ci.yml     lint, build+test+bench+diff-pano, sanitizers+fuzz, on every PR
   CODEOWNERS           @vlah02 review required repo-wide
 boot_entries.json     menu structure + your real kernel paths / partition UUIDs
 Makefile        ship / dev / test / bench / diff-pano / test-asan / fuzz
@@ -425,20 +425,24 @@ sudo ./dist/ubuntu/rebuild.sh && sudo reboot   # rebuild initramfs + re-sign UKI
 ## Testing & CI
 
 ```bash
-make test       # unit tests -> "ALL TESTS PASS": 39 cases across 8 files
+make test       # unit tests -> "ALL TESTS PASS": 48 cases across 8 files
                  # (tests/test_*.c, the tiny t.h harness)
 make bench      # panorama render benchmark; fails the build if slower than
                  # CRAFTBOOT_BENCH_MAX_MS (default 3.0 ms/frame @ 1920x1080,
                  # the target-HW regression bar — see tests/bench_pano.c)
 make diff-pano  # scalar-vs-AVX2 panorama render, must be byte-identical
-make test-asan  # the same 39 cases, rebuilt with -fsanitize=address,undefined
+make test-asan  # the same 48 cases, rebuilt with -fsanitize=address,undefined
 make fuzz       # fuzz-lite of the efivar load-option + boot_entries.json
                  # parsers under ASan+UBSan (fixed-seed, deterministic)
 ```
 
 [GitHub Actions](.github/workflows/ci.yml) runs on every pull request against
-`main` (and on push to `main`, as a post-merge guard) as two jobs:
+`main` (and on push to `main`, as a post-merge guard) as three jobs:
 
+- **lint scripts + tools** — every `dist/**/*.sh` + `tools/*.sh` installer must
+  parse under `bash -n`, and every `tools/*.py` asset helper must byte-compile
+  (`python3 -m py_compile`), so a syntax error in a load-bearing script is
+  caught in CI instead of shipping silently.
 - **build + test** — the ship (`make`) and dev (`make dev`) builds must be
   warning-free (`-Wall -Wextra`; CI greps the build log for `warning:` and
   fails the job if it finds one), the ship binary must be statically linked,
@@ -446,8 +450,10 @@ make fuzz       # fuzz-lite of the efivar load-option + boot_entries.json
   runners are slower than the ASUS ROG G713PI target hardware, so the CI
   ceiling is looser than the 3 ms local default; override either with the
   `CRAFTBOOT_BENCH_MAX_MS` env var), and `make diff-pano`.
-- **sanitizers + fuzz** — `make test-asan` (the full 39-case suite instrumented
-  with AddressSanitizer + UBSan) and `make fuzz`.
+- **sanitizers + fuzz** — `make test-asan` (the full 48-case suite instrumented
+  with AddressSanitizer + UBSan) and `make fuzz`. Both build with
+  `-fno-sanitize-recover=undefined`, so a UBSan trip aborts nonzero and fails
+  the job instead of printing a diagnostic and passing.
 
 Both jobs need an **AVX2-capable runner**: the ship binary is built
 `-march=x86-64-v3` with no runtime scalar fallback, so CI checks

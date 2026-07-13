@@ -12,6 +12,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: lint scripts + tools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The dist/*.sh installers and tools/*.sh are load-bearing but not
+      # exercised by the C test suite -- a bash syntax error would otherwise
+      # ship silently. bash -n is a pure parse (no execution), so it is safe
+      # to run on installer scripts that would touch efivars/ESP if executed.
+      - name: Shell scripts parse cleanly (bash -n)
+        run: |
+          shopt -s globstar nullglob
+          scripts=(dist/**/*.sh tools/*.sh)
+          test ${#scripts[@]} -gt 0 || { echo "::error::no shell scripts found"; exit 1; }
+          for s in "${scripts[@]}"; do echo "bash -n $s"; bash -n "$s"; done
+
+      # Byte-compile the Python asset tools (bake_font / build_panorama /
+      # make_demo / reencode_panoramas) so a syntax error in a contributor
+      # helper is caught in CI instead of at asset-regen time.
+      - name: Python tools byte-compile (py_compile)
+        run: |
+          python3 --version
+          python3 -m py_compile tools/*.py
+
   build-test:
     name: build + test
     runs-on: ubuntu-latest
