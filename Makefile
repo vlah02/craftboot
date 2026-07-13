@@ -119,5 +119,12 @@ efi: ; @mkdir -p build; $(MINGW) $(EFI_CFLAGS) $(EFI_SRC) -o build/craftboot.efi
 .PHONY: efi
 # (Core/EFI source list grows in later tasks.)
 
+# Task 9: trivial chainload TARGET .efi (distinct solid-color fill + serial
+# marker, see tests/efi/chainload_target.c) used to prove the zero-reboot
+# LoadImage/StartImage handoff in QEMU. It is a test fixture, not part of
+# craftboot.efi, so it is built by its own rule and kept out of EFI_SRC.
+chainload-target: ; @mkdir -p build; $(MINGW) $(EFI_CFLAGS) tests/efi/chainload_target.c -o build/chainload_target.efi $(EFI_LDFLAGS)
+.PHONY: chainload-target
+
 clean: ; -rm -rf $(B)
 .PHONY: all dev test clean bench
