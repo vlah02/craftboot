@@ -161,7 +161,7 @@ static int scene_load(scene_t *s, const config_t *cfg, const char *assets, int w
     }
     pick_splash(assets, s->splash_txt, sizeof s->splash_txt);
     img_t st = text_render(&s->splash, s->splash_txt, C_SPLASH, 2);
-    s->splash_rot = img_rotated(&st, 18.f);
+    s->splash_rot = img_rotated(&st, -18.f);   /* CCW like Minecraft: right side tilts up */
     img_free(&st);
     return 0;
 }
@@ -241,6 +241,7 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
     menustate_t m; ms_init(&m, cfg);
     double t0 = now_s(), tprev = t0;
     long frames = 0; double tstat = t0;
+    int warmed = 0;                              /* skip the first frame's startup-gap dt */
     const entry_t *chosen = NULL;
     while (!chosen) {
         double t = now_s(), dt = t - tprev; tprev = t;
@@ -259,10 +260,20 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
         double yaw = 0.7 + (t - t0) / 140.0;          /* PANO_START + t/PANO_LOOP */
         draw_scene(fb, &s, &m, t, yaw);
         display_flip(d);
+        /* smoothed instantaneous fps: shows within a frame or two, no 5s delay.
+           The first iteration's dt is the startup gap (near zero) — skip it. */
+        if (dt > 0) {
+            if (!warmed) {
+                warmed = 1;
+            } else {
+                double inst = 1.0 / dt;
+                if (inst > 2000) inst = 2000;       /* sanity clamp vs a stray tiny dt */
+                s.fps = s.fps > 0 ? s.fps * 0.9 + inst * 0.1 : inst;
+            }
+        }
         frames++;
-        if (t - tstat >= 5.0) {
-            s.fps = frames / (t - tstat);
-            fprintf(stderr, "[craftboot] fps: %.1f\n", s.fps);
+        if (t - tstat >= 5.0) {                     /* throttled kmsg log only */
+            fprintf(stderr, "[craftboot] fps: %.1f\n", frames / (t - tstat));
             frames = 0; tstat = t;
         }
     }
