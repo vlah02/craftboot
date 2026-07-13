@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, c_implementation]
+
+# Cancel superseded runs on the same ref (e.g. a force-push to a PR branch).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # tags, so `git describe` yields the real version
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libdrm-dev libsdl2-dev zstd
+
+      - name: AVX2 preflight
+        run: |
+          # the shipped binary is -march=x86-64-v3 and has no runtime scalar
+          # fallback, so the runner itself must be able to execute AVX2.
+          grep -q avx2 /proc/cpuinfo || { echo "::error::runner CPU lacks AVX2"; exit 1; }
+
+      - name: Build ship binary (must be warning-free)
+        run: |
+          make clean
+          make 2>&1 | tee build-ship.log
+          ! grep -qi 'warning:' build-ship.log
+
+      - name: Build dev binary (must be warning-free)
+        run: |
+          make dev 2>&1 | tee build-dev.log
+          ! grep -qi 'warning:' build-dev.log
+
+      - name: Confirm ship binary is statically linked
+        run: file build/craftboot | grep -q 'statically linked'
+
+      - name: Unit tests
+        run: make test
+
+      - name: Panorama performance gate (< 3 ms/frame @ 1080p)
+        run: make bench
+
+      - name: Scalar vs AVX2 differential (must be byte-identical)
+        run: make diff-pano

@@ -1,0 +1,4 @@
+# Every change requires review from @vlah02.
+# With "Require review from Code Owners" enabled in branch protection,
+# no PR can merge without @vlah02's approval.
+* @vlah02
