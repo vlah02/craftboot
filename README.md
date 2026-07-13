@@ -11,10 +11,17 @@ perspective panorama (a random Minecraft version each boot, the logo auto-matchi
 the world), grainy Minecraft buttons, pulsing splash text, a "Building terrain"
 loading animation, and a 15-second auto-boot countdown.
 
-> **Status: v2.1, working on real hardware** (ASUS ROG G713PI, Ubuntu, **Secure
-> Boot ON**). One static C binary is `/init`: **179 fps** at 1920×1080, a
-> **12 MB** initramfs (down from 113 MB), first frame in well under a second.
-> Boots as its own firmware entry `Craftboot`, hands off to both OSes seamlessly.
+> **Status: v2.1 is what's installed and working on real hardware today**
+> (ASUS ROG G713PI, Ubuntu, **Secure Boot ON**) — one static C binary as
+> `/init` in a signed initramfs: **179 fps** at 1920×1080, a **12 MB**
+> initramfs (down from 113 MB), first frame in well under a second, boots as
+> its own firmware entry `Craftboot`, hands off to both OSes seamlessly.
+> **v3.0 (in progress, Milestone A complete)** rewrites craftboot as a
+> standalone **UEFI application** — proven rendering, navigating, and
+> zero-reboot chainloading **in QEMU/OVMF**; MOK-signing it, installing it as
+> the real firmware entry, and validating on real hardware is Milestone B
+> (pending), at which point it supersedes the initramfs path below. See
+> [v3.0 — craftboot as a UEFI application (Milestone A)](#v30--craftboot-as-a-uefi-application-milestone-a).
 > Grew out of customizing the [minegrub](https://github.com/Lxtharia/minegrub-theme)
 > GRUB theme; it is now a standalone project, rewritten from Python/pygame to
 > plain C for M4/M5 (see [CHANGELOG.md](CHANGELOG.md)).
@@ -46,6 +53,7 @@ loading animation, and a 15-second auto-boot countdown.
 - [Demo](#demo)
 - [Why a program instead of a GRUB theme](#why-a-program-instead-of-a-grub-theme)
 - [How it works](#how-it-works)
+- [v3.0 — craftboot as a UEFI application (Milestone A)](#v30--craftboot-as-a-uefi-application-milestone-a)
 - [Repository layout](#repository-layout)
 - [Prerequisites](#prerequisites)
 - [Setup, part by part](#setup-part-by-part)
@@ -174,15 +182,80 @@ pass `--live` to force it, `--dry` to force a dry-run even as init.
 
 ---
 
+## v3.0 — craftboot as a UEFI application (Milestone A)
+
+Everything above this section describes the **v2.1 initramfs path** — what
+currently ships and runs on real hardware. In parallel, Milestone A rewrites
+craftboot as a **standalone UEFI application**: instead of shipping as
+`/init` inside a Linux initramfs, `craftboot.efi` is a PE32+ binary that the
+firmware loads and runs directly, **before** `ExitBootServices`.
+
+- **What it is**: the menu renders straight onto the GOP (Graphics Output
+  Protocol) framebuffer while UEFI boot services are still live, and instead
+  of a Linux `reboot(2)` + `BootNext` round-trip, handoff to the chosen OS
+  loader is a direct **chainload** — `LoadImage`/`StartImage` on the next
+  loader's `.efi` image, in the same boot, with **zero reboot**. Firmware
+  state stays pristine (no kexec, no re-POST needed for the seamless path),
+  which is also why this sidesteps the v2 kexec/ACPI-audio problem described
+  above without needing `BootNext` either.
+- **Architecture**: a platform-agnostic core (`src/core/`: `render.c`,
+  `menu.c`, `assets.c`, `efivar.c`) sits behind three thin interfaces —
+  [`platform/display.h`](src/platform/display.h),
+  [`platform/input.h`](src/platform/input.h), and
+  [`platform/plat.h`](src/platform/plat.h) — implemented by three backends:
+  the new **EFI backend** (`src/efi/`: GOP display, Simple Text Input,
+  Simple File System reads, TSC-based timing, `EFI_RNG_PROTOCOL`, the
+  chainload/BootNext/`OsIndications` handoff, and a small freestanding
+  `mini_libc` for allocation, mem/str ops, a mini `snprintf`, and
+  range-reduced trig), the existing **SDL backend** (desktop `make dev`),
+  and the existing **DRM/evdev backend** (the v2.1 initramfs path, still
+  present and shipping).
+- **Constraints in the EFI build**: scalar, single-threaded, no AVX2 —
+  firmware execution has no guaranteed AVX/SSE register state to preserve
+  across UEFI calls and no pthreads, so the EFI build composes each frame
+  into a cached RAM back-buffer and does one blit to the write-combining GOP
+  framebuffer. The host build (`make`, `make dev`) keeps the AVX2 fast path
+  and threading unchanged.
+- **Build + test it yourself**:
+  ```bash
+  make efi                    # -> build/craftboot.efi (PE32+, x86_64-w64-mingw32-gcc)
+  ./tools/run-qemu-efi.sh     # boot it in QEMU/OVMF
+  ```
+  CI runs an `efi-build` job (warning-free PE32+ build) on every PR.
+- **Status, honestly**: Milestone A = the EFI app builds, renders the menu,
+  navigates it, and chainloads the next loader with zero reboot — **proven
+  in QEMU/OVMF**, not yet on real hardware. It has not been signed and is
+  not installed as a firmware entry anywhere. The chainload **mechanism** is
+  proven in QEMU against a test target `.efi`; the default
+  `boot_entries.json` Ubuntu entry points at
+  `\EFI\ubuntudirect\shimx64.efi`, but the current buffer-form `LoadImage`
+  hands the loaded image no device path, so shim cannot yet locate its own
+  next stage — completing the real shim/UKI Ubuntu chain (device-path
+  `LoadImage`) is Milestone B, not something the shipped entry does today.
+  **Milestone B (pending)**: add device-path `LoadImage`, MOK-sign
+  `craftboot.efi`, install it as the `Craftboot` firmware entry's loader,
+  chain the MOK-signed Ubuntu UKI under Secure Boot, validate on the real
+  ASUS ROG G713PI, and — only then — retire the v2.1 Linux initramfs path
+  and the `dist/ubuntu` tooling.
+
+---
+
 ## Repository layout
 
 ```
 src/
   core/       render.c/.h (blits, text, panorama+AVX2), assets.c/.h (config/image/font
-              loading), menu.c/.h (state machine + scene draw), version.h
-  platform/   display_drm.c / display_sdl.c, input_evdev.c / input_sdl.c
-              (identical display_t/input_t interface; DRM+evdev ship, SDL is DEV-only)
-  boot/       actions.c/.h — kexec_file_load, BootNext, OsIndications syscalls
+              loading), menu.c/.h (state machine + scene draw), efivar.c/.h (pure
+              firmware-format helpers, host-tested), version.h
+  platform/   display.h / input.h / plat.h (the backend interfaces); DRM+evdev ship
+              as v2.1 (display_drm.c, input_evdev.c) with plat_host.c; SDL is DEV-only
+              (display_sdl.c, input_sdl.c)
+  efi/        the v3.0 UEFI-application backend: main.c (efi_main entrypoint), efi.h
+              (protocol/type defs), mini_libc.c/.h (freestanding allocator, mem/str,
+              snprintf, trig), display_efi.c (GOP), input_efi.c (Simple Text Input),
+              fs.c/.h (Simple File System reads), sys.c/.h (TSC timing, RNG),
+              actions_efi.c (chainload + BootNext/OsIndications handoff), plat_efi.c
+  boot/       actions.c/.h — kexec_file_load, BootNext, OsIndications syscalls (v2.1)
   init/       main.c (PID-1 entrypoint), initlib.c (mounts, module loading, UUID probe)
   vendor/     stb_image.h, jsmn.h (vendored single-header libs)
 assets/
@@ -470,15 +543,18 @@ entry) before it can merge.
 
 `git describe --tags` is the source of truth, injected at build time
 (`-DCRAFTBOOT_VERSION_GIT`, see the `Makefile`); [`src/core/version.h`](src/core/version.h)'s
-`"v2.1"` is only a fallback for builds outside the Makefile (IDE indexers,
-ad-hoc `gcc` invocations). The footer shows `Craftboot v2.1  179 fps` — an
-untagged/dirty tree shows something like `v2.1-3-gabc1234-dirty`.
+`"v3.0"` is only a fallback for builds outside the Makefile (IDE indexers,
+ad-hoc `gcc` invocations). Before the `v3.0` tag lands, the footer shows the
+raw describe string, e.g. `Craftboot v2.1-3-gabc1234-dirty  179 fps`; after
+tagging it reads `Craftboot v3.0  179 fps`. The EFI build
+(`make efi`) uses the same `$(VERSION)` value, so the host and EFI footers
+always agree.
 
 To cut a release: tag, then rebuild (the version string is baked in at
 compile time, so existing binaries don't retroactively pick it up).
 
 ```bash
-git tag v2.2 && make clean && make && make dev
+git tag v3.0 && make clean && make && make dev && make efi
 ```
 
 See [CHANGELOG.md](CHANGELOG.md) for what shipped in each tag.

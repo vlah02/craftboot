@@ -106,9 +106,13 @@ $(B)/fuzz_parse: tests/fuzz_parse.c $(B)/asan_assets.o $(B)/asan_actions.o $(B)/
 # Freestanding UEFI app: no libc, no libm -- only efi.h + mini_libc + compiler
 # builtins. Cross-compiled PE32+ via mingw's ms_abi support.
 MINGW := x86_64-w64-mingw32-gcc
+# Version consistency: reuse the same $(VERSION) (git describe --tags) as the
+# host CFLAGS above, rather than a second hardcoded literal, so the EFI menu
+# footer and the host binary's footer always agree. Pre-tag this prints the
+# describe string (e.g. v2.1-NN-gSHA); it reads v3.0 once the v3.0 tag lands.
 EFI_CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar \
               -mno-red-zone -mno-stack-arg-probe -Wall -Wextra -Isrc -Isrc/vendor \
-              -DPANO_NO_AVX2 -DPANO_NO_THREADS -DEFI -DCRAFTBOOT_VERSION_GIT=\"v3.0\" \
+              -DPANO_NO_AVX2 -DPANO_NO_THREADS -DEFI -DCRAFTBOOT_VERSION_GIT=\"$(VERSION)\" \
               -D__USE_MINGW_ANSI_STDIO=0 -DNDEBUG \
               -DSTBI_NO_STDIO -DSTBI_NO_LINEAR
 EFI_LDFLAGS := -nostdlib -Wl,-dll -shared -Wl,--subsystem,10 -e efi_main

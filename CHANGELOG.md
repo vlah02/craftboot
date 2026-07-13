@@ -5,6 +5,50 @@ All notable changes to craftboot are documented here. Format loosely follows
 project's `git` tags (`git describe --tags` is the runtime source of truth,
 see [README.md#versioning](README.md#versioning)).
 
+## Unreleased — v3.0 (Milestone A: UEFI application)
+
+Milestone A only — proven in **QEMU/OVMF**. Not yet signed, not yet
+installed as a firmware entry, not yet run on real hardware; the v2.1
+initramfs path below is what's still installed and running on real
+hardware. Milestone B (pending) covers MOK-signing, real-firmware install,
+real-hardware validation, and retiring the v2.1 initramfs path + `dist/ubuntu`.
+
+### Added
+- Rewrote craftboot as a standalone **UEFI application** (PE32+, `make efi`)
+  that renders the menu on the GOP framebuffer before `ExitBootServices` and
+  hands off by **chainloading** the next loader via `LoadImage`/`StartImage`
+  — **zero reboot** (proven in QEMU; the seamless, audio-safe alternative to
+  v2.1's kexec/`BootNext` handoff).
+- Platform-agnostic core kept behind `display.h`/`input.h`/`plat.h`; new EFI
+  backend (`src/efi/`): GOP display, Simple Text Input, Simple File System
+  reads, TSC-based timing, `EFI_RNG_PROTOCOL`, chainload +
+  BootNext/`OsIndications` handoff, and a freestanding `mini_libc`
+  (allocator, mem/str ops, mini `snprintf`, range-reduced trig).
+- Config schema v3: entry types `chainload`/`bootnext`/`uefi`/`submenu`/
+  `info`/`back` (dropped `kexec`/`windows`); buffer-based asset decoding
+  (`*_mem`) so assets can load from an ESP via Simple File System.
+- `core/efivar.c` pure firmware-format helpers (load-option description
+  decode, `OsIndications` read-modify-write, `Boot####` name parse) with
+  host-side unit tests; mini `snprintf` host-tested.
+- `tools/run-qemu-efi.sh` QEMU/OVMF harness + CI `efi-build` job
+  (warning-free PE32+ build).
+
+### Changed
+- Renderer runs scalar + single-threaded + no-AVX2 in the EFI build
+  (firmware execution has no AVX/SSE state to rely on and no pthreads); the
+  host build (`make`, `make dev`) keeps AVX2 + threading unchanged.
+- `src/core/version.h` fallback bumped to `"v3.0"`; the EFI build's
+  `CRAFTBOOT_VERSION_GIT` now reuses the same `$(VERSION)` (`git describe`)
+  value as the host build instead of a separate hardcoded string, so both
+  footers agree once the `v3.0` tag lands.
+
+### Not yet done (Milestone B)
+- Signing `craftboot.efi` with the MOK key, installing it as the `Craftboot`
+  firmware entry's loader, and validating on real hardware.
+- Retiring the v2.1 Linux initramfs path (`display_drm.c`/`input_evdev.c`/
+  `src/init/`/`src/boot/actions.c`) and the `dist/ubuntu` tooling — both
+  stay in place and keep building until Milestone B lands.
+
 ## Unreleased — v2.1 post-tag hardening
 
 Landed after the `v2.1` tag; kept here until the next tag cuts a release.
