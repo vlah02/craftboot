@@ -6,6 +6,11 @@
 
 EFI_SYSTEM_TABLE *ST;
 EFI_BOOT_SERVICES *BS;
+/* Declared here (uninitialized) so src/efi/actions_efi.c's `extern
+ * EFI_HANDLE g_image;` resolves at link time; efi_main below does not yet
+ * assign it -- that wiring, along with the display/input/fs/handoff
+ * integration this placeholder efi_main doesn't do yet either, is Task 8. */
+EFI_HANDLE g_image;
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     (void)image;

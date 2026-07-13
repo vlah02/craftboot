@@ -1,5 +1,6 @@
 #include "t.h"
 #include "boot/actions.h"
+#include "core/efivar.h"
 #include <unistd.h>
 
 static int ucs2_match(void) {
@@ -117,14 +118,14 @@ static int osindications_preserves_existing_bits(void) {
  * tmpfile, returning the captured diagnostics in `log` and the rc via *rc.
  * Dry-run performs no syscalls/reboots and never enters the menu again, so
  * this exercises the real dispatch + path-assembly logic hardware-free. */
-static int run_dry(const entry_t *e, const char *root, int *rc,
+static int run_dry(const entry_t *e, int *rc,
                    char *log, size_t logcap) {
     FILE *tmp = tmpfile();
     if (!tmp) return -1;
     fflush(stderr);
     int saved = dup(fileno(stderr));
     if (saved < 0 || dup2(fileno(tmp), fileno(stderr)) < 0) { fclose(tmp); return -1; }
-    *rc = action_execute(e, root, 0);
+    *rc = action_execute(e, 0);
     fflush(stderr);
     dup2(saved, fileno(stderr));
     close(saved);
@@ -141,27 +142,27 @@ static int dry_run_dispatch_return_codes(void) {
 
     /* E_UEFI dry-run: prints plan, returns 0 (no OsIndications write). */
     memset(&e, 0, sizeof e); e.type = E_UEFI;
-    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
+    OK(run_dry(&e, &rc, log, sizeof log) == 0); OK(rc == 0);
 
     /* E_INFO (and other non-handoff types) return 0. */
     memset(&e, 0, sizeof e); e.type = E_INFO;
-    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
+    OK(run_dry(&e, &rc, log, sizeof log) == 0); OK(rc == 0);
 
     /* Windows dry-run (now an E_BOOTNEXT entry) returns 0 regardless of
      * whether the firmware has a "Windows Boot Manager" load option (the
      * match only gates a live boot). */
     memset(&e, 0, sizeof e); e.type = E_BOOTNEXT;
     strcpy(e.label, "Windows"); strcpy(e.match, "Windows Boot Manager");
-    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
+    OK(run_dry(&e, &rc, log, sizeof log) == 0); OK(rc == 0);
 
     /* E_BOOTNEXT with a match string: dry-run returns 0. */
     memset(&e, 0, sizeof e); e.type = E_BOOTNEXT;
     strcpy(e.label, "Ubuntu"); strcpy(e.match, "NoSuchLoadOption_craftboot_test");
-    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == 0);
+    OK(run_dry(&e, &rc, log, sizeof log) == 0); OK(rc == 0);
 
     /* E_BOOTNEXT with NO match string is a config error: -1 even in dry-run. */
     memset(&e, 0, sizeof e); e.type = E_BOOTNEXT; strcpy(e.id, "broken");
-    OK(run_dry(&e, "", &rc, log, sizeof log) == 0); OK(rc == -1);
+    OK(run_dry(&e, &rc, log, sizeof log) == 0); OK(rc == -1);
     OK(strstr(log, "no match string") != NULL);
     return 0;
 }

@@ -11,7 +11,7 @@ CFLAGS  += -DCRAFTBOOT_VERSION_GIT=\"$(VERSION)\"
 LDLIBS  := -lpthread -lm
 B       := build
 
-CORE    := $(B)/render.o $(B)/assets.o $(B)/menu.o
+CORE    := $(B)/render.o $(B)/assets.o $(B)/menu.o $(B)/efivar.o
 SHIP    := $(B)/display_drm.o $(B)/input_evdev.o $(B)/actions.o $(B)/initlib.o $(B)/main.o
 DEVOBJ  := $(B)/dev_render.o $(B)/dev_assets.o $(B)/dev_menu.o \
            $(B)/dev_display_sdl.o $(B)/dev_input_sdl.o $(B)/dev_actions.o \
@@ -76,7 +76,7 @@ diff-pano: $(CORE) $(B)/display_drm.o $(B)/input_evdev.o
 # a missing env var), so the sanitizer gate is actually blocking. (ASan
 # already aborts nonzero on its own errors; this only fixes UBSan.)
 ASAN_CFLAGS := $(CFLAGS) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
-ASAN_CORE   := $(B)/asan_render.o $(B)/asan_assets.o $(B)/asan_menu.o
+ASAN_CORE   := $(B)/asan_render.o $(B)/asan_assets.o $(B)/asan_menu.o $(B)/asan_efivar.o
 
 $(B)/asan_%.o: src/core/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
 $(B)/asan_%.o: src/platform/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
@@ -110,7 +110,7 @@ EFI_CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar
               -mno-red-zone -Wall -Wextra -Isrc -Isrc/vendor -DPANO_NO_AVX2 -DEFI
 EFI_LDFLAGS := -nostdlib -Wl,-dll -shared -Wl,--subsystem,10 -e efi_main
 EFI_SRC := src/efi/main.c src/efi/mini_libc.c src/efi/display_efi.c src/efi/input_efi.c \
-           src/efi/fs.c src/efi/sys.c
+           src/efi/fs.c src/efi/sys.c src/efi/actions_efi.c src/core/efivar.c
 efi: ; @mkdir -p build; $(MINGW) $(EFI_CFLAGS) $(EFI_SRC) -o build/craftboot.efi $(EFI_LDFLAGS)
 .PHONY: efi
 # (Core/EFI source list grows in later tasks.)

@@ -7,6 +7,7 @@
  * bottom of main() still fires. There is no path back into the menu.
  */
 #include "core/assets.h"
+#include "core/efivar.h"
 #include "boot/actions.h"
 #include <dirent.h>
 #include <fcntl.h>
@@ -29,16 +30,9 @@
 #define LINUX_REBOOT_CMD_KEXEC 0x45584543
 #endif
 
-/* ---- UCS-2 / EFI load-option helpers (unit-tested, see tests/test_actions.c) ---- */
-
-int ucs2_equals_ascii(const unsigned char *u, size_t maxb, const char *a) {
-    size_t i = 0;
-    for (; a[i]; i++) {
-        if (2 * i + 1 >= maxb) return 0;
-        if (u[2 * i] != (unsigned char)a[i] || u[2 * i + 1] != 0) return 0;
-    }
-    return 2 * i + 1 < maxb && u[2 * i] == 0 && u[2 * i + 1] == 0;
-}
+/* ---- EFI load-option helpers (unit-tested, see tests/test_actions.c) ----
+ * ucs2_equals_ascii() itself moved to core/efivar.c/.h (format-agnostic,
+ * shared with the firmware-runtime path in src/efi/actions_efi.c). */
 
 /* An efivarfs file's contents are: 4 bytes of efivarfs-exposed attributes,
  * then the raw EFI_LOAD_OPTION structure: u32 Attributes, u16
@@ -228,8 +222,7 @@ static int do_bootnext(const entry_t *e, const char *want, const char *name,
     return -1;
 }
 
-int action_execute(const entry_t *e, const char *root, int live) {
-    (void)root;
+int action_execute(const entry_t *e, int live) {
     const char *mode = live ? "LIVE handoff" : "dry-run handoff";
     switch (e->type) {
     case E_BOOTNEXT:

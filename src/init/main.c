@@ -109,6 +109,8 @@ int main(int argc, char **argv) {
     }
     if (is_init && mount_root(cfg.root_uuid) == 0) root = "/mnt";
     else if (is_init) fprintf(stderr, "[craftboot] no root found (kexec unavailable)\n");
+    (void)root;   /* mount_root's side effect (root fs at /mnt) is what matters now that
+                   * action_execute() is 2-arg (Task 7); root prefix no longer passed through */
 
     display_t *d = display_open(1920, 1080);
     if (!d) {
@@ -118,7 +120,7 @@ int main(int argc, char **argv) {
     }
     input_t *in = input_open(d);
     const entry_t *e = menu_run(d, in, &cfg, assets);
-    int rc = e ? action_execute(e, root, live) : 0;
+    int rc = e ? action_execute(e, live) : 0;
     if (rc) menu_show_error(d, "handoff failed", 15);
     input_close(in);
     display_close(d);
