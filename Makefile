@@ -107,9 +107,9 @@ $(B)/fuzz_parse: tests/fuzz_parse.c $(B)/asan_assets.o $(B)/asan_actions.o $(B)/
 # builtins. Cross-compiled PE32+ via mingw's ms_abi support.
 MINGW := x86_64-w64-mingw32-gcc
 EFI_CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar \
-              -mno-red-zone -Wall -Wextra -Isrc -Isrc/vendor -DPANO_NO_AVX2
+              -mno-red-zone -Wall -Wextra -Isrc -Isrc/vendor -DPANO_NO_AVX2 -DEFI
 EFI_LDFLAGS := -nostdlib -Wl,-dll -shared -Wl,--subsystem,10 -e efi_main
-EFI_SRC := src/efi/main.c src/efi/mini_libc.c
+EFI_SRC := src/efi/main.c src/efi/mini_libc.c src/efi/display_efi.c
 efi: ; @mkdir -p build; $(MINGW) $(EFI_CFLAGS) $(EFI_SRC) -o build/craftboot.efi $(EFI_LDFLAGS)
 .PHONY: efi
 # (Core/EFI source list grows in later tasks.)
