@@ -1,22 +1,11 @@
 #include "core/assets.h"
+#include "platform/plat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #define JSMN_STATIC
 #include "jsmn.h"
 
-static char *slurp(const char *path, long *n) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
-    long sz = ftell(f);
-    if (sz < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
-    *n = sz;
-    char *b = malloc((size_t)sz + 1);
-    if (!b) { fclose(f); return NULL; }
-    if (fread(b, 1, *n, f) != (size_t)*n) { fclose(f); free(b); return NULL; }
-    b[*n] = 0; fclose(f); return b;
-}
 static int teq(const char *js, const jsmntok_t *t, const char *s) {
     return t->type == JSMN_STRING && (int)strlen(s) == t->end - t->start &&
            !strncmp(js + t->start, s, t->end - t->start);
@@ -91,7 +80,7 @@ int config_load_mem(config_t *c, const char *js, long n) {
     return c->nmenu[0] ? 0 : -1;
 }
 int config_load(config_t *c, const char *path) {
-    long n; char *js = slurp(path, &n); if (!js) return -1;
+    long n; char *js = plat_slurp(path, &n); if (!js) return -1;
     int r = config_load_mem(c, js, n);
     free(js);
     return r;
@@ -110,7 +99,7 @@ img_t img_load_mem(const unsigned char *bytes, int len) {
     return o;
 }
 img_t img_load(const char *path) {
-    long n; char *b = slurp(path, &n); if (!b) return (img_t){0};
+    long n; char *b = plat_slurp(path, &n); if (!b) return (img_t){0};
     img_t o = img_load_mem((unsigned char *)b, (int)n);
     free(b);
     return o;
@@ -157,8 +146,8 @@ int font_load_mem(font_t *f, const unsigned char *png, int pnglen,
     return 0;
 }
 int font_load(font_t *f, const char *png_path, const char *json_path) {
-    long pn; char *pb = slurp(png_path, &pn); if (!pb) return -1;
-    long jn; char *jb = slurp(json_path, &jn);
+    long pn; char *pb = plat_slurp(png_path, &pn); if (!pb) return -1;
+    long jn; char *jb = plat_slurp(json_path, &jn);
     if (!jb) { free(pb); return -1; }
     int r = font_load_mem(f, (unsigned char *)pb, (int)pn, jb, jn);
     free(pb); free(jb);
