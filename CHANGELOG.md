@@ -5,9 +5,18 @@ All notable changes to craftboot are documented here. Format loosely follows
 project's `git` tags (`git describe --tags` is the runtime source of truth,
 see [README.md#versioning](README.md#versioning)).
 
-## Unreleased — v2.1 polish
+## Unreleased — v2.1 post-tag hardening
+
+Landed after the `v2.1` tag; kept here until the next tag cuts a release.
 
 ### Added
+- **CI**: GitHub Actions (`.github/workflows/ci.yml`) — a `build + test` job
+  (warning-free ship + dev build, static-link check, `make test`, `make bench`
+  perf gate, `make diff-pano` scalar-vs-AVX2 differential) and a
+  `sanitizers + fuzz` job (`make test-asan` = the full suite under
+  ASan+UBSan, `make fuzz` = fuzz-lite of the efivar + config parsers). A
+  repo-wide [`.github/CODEOWNERS`](.github/CODEOWNERS) (`@vlah02`); `main` is
+  now branch-protected on green CI plus CODEOWNERS review.
 - `dist/ubuntu/ubuntu-direct.sh` (opt-in): redirects the firmware `Ubuntu`
   entry to boot Ubuntu **directly** via a second signed UKI (Ubuntu's real
   kernel + real initramfs, same MOK key as craftboot's own entry) — no GRUB
@@ -16,6 +25,30 @@ see [README.md#versioning](README.md#versioning)).
   installed but dormant (no entry points at it); a printed break-glass
   `efibootmgr` command and the existing "Ubuntu (recovery mode)" kexec entry
   both still reach it if a kernel update ever breaks the direct UKI.
+
+### Changed
+- Test coverage expanded to **39 cases across 8 files**: an ext4-UUID root
+  probe suite (`tests/test_uuid.c`), efivar value-builder tests (BootNext /
+  OsIndications byte layout, `tests/test_actions.c`), blit bounds-safety tests
+  (`tests/test_blit.c`), and a fixed-seed fuzz-lite harness
+  (`tests/fuzz_parse.c`) hammering the efivar load-option and
+  `boot_entries.json` parsers under ASan+UBSan.
+- Menu polish: the footer now shows a live, smoothed fps reading immediately
+  instead of a blank first few frames; the panorama's splash rotation
+  direction was corrected to match Minecraft's own title screen.
+- Demos re-cut at 60fps with a continuous-pan world montage — one unbroken
+  pan across four worlds instead of three clips that each restarted the pan.
+- Five rounds of PR-review hardening across the C rewrite: self-contained
+  headers, malloc/seek/EINTR-safe I/O, non-ASCII efivar-description
+  rejection, clean SDL teardown on exit, an empty-submenu guard against
+  `SIGFPE`, a runtime AVX2 flip-probe, and assorted bounds/rounding fixes.
+
+### Fixed
+- MOK enrollment check: under `set -o pipefail`, `mokutil`'s non-zero exit
+  status could mask an already-enrolled key as "not enrolled"; the check now
+  captures `mokutil`'s output before piping it to `grep`.
+- Repo hygiene: untracked internal process docs, dropped stray Python-era
+  leftovers, moved the vendored kernel stash under `dist/ubuntu/`.
 
 ## v2.1 — 2026-07-12
 

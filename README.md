@@ -1,5 +1,7 @@
 # craftboot
 
+![CI](https://github.com/vlah02/craftboot/actions/workflows/ci.yml/badge.svg)
+
 A Minecraft-style **graphical boot menu** that boots directly from firmware as its
 own signed UEFI entry, shows a rotating 360° Minecraft title panorama, and hands
 off to **Windows** or **Ubuntu** when you pick a "world".
@@ -48,6 +50,7 @@ loading animation, and a 15-second auto-boot countdown.
 - [Prerequisites](#prerequisites)
 - [Setup, part by part](#setup-part-by-part)
 - [Development loop (QEMU)](#development-loop-qemu)
+- [Testing & CI](#testing--ci)
 - [Versioning](#versioning)
 - [Recovery & fallback](#recovery--fallback)
 - [Contributing: code](#contributing-code)
@@ -192,15 +195,20 @@ dist/ubuntu/
   uki-setup.sh      genkey / install / --uninstall the firmware entry (MOK+shim+UKI)
   uki-build.sh      build + sign the UKI for a kernel version
   rebuild.sh        build.sh + uki-build.sh in one (the dev-deploy command)
+  ubuntu-direct.sh  optional: redirect the firmware Ubuntu entry to a direct signed UKI (no GRUB)
 tools/
   run-qemu.sh          boot the initramfs in QEMU/OVMF (a graphical window)
   build_panorama.py    cubemap (6 faces) -> equirectangular JPEG (contributor tool)
   bake_font.py         minecraft.otf -> baked bitmap font atlases (contributor tool)
   reencode_panoramas.py  one-time PNG->JPEG q90 migration helper
   make_demo.py         raw CRAFTBOOT_SHOT_SEQ frame dumps -> the README's demo WebPs
-tests/          unit tests (t.h harness) + bench_pano.c + diff_pano.c
+tests/          unit tests (t.h harness, 39 cases across 8 test_*.c files)
+                + bench_pano.c, diff_pano.c, fuzz_parse.c
+.github/
+  workflows/ci.yml     build+test+bench+diff-pano and sanitizers+fuzz, on every PR
+  CODEOWNERS           @vlah02 review required repo-wide
 boot_entries.json     menu structure + your real kernel paths / partition UUIDs
-Makefile        ship / dev / test / bench / diff-pano
+Makefile        ship / dev / test / bench / diff-pano / test-asan / fuzz
 CHANGELOG.md
 ```
 
@@ -414,6 +422,44 @@ sudo ./dist/ubuntu/rebuild.sh && sudo reboot   # rebuild initramfs + re-sign UKI
 
 ---
 
+## Testing & CI
+
+```bash
+make test       # unit tests -> "ALL TESTS PASS": 39 cases across 8 files
+                 # (tests/test_*.c, the tiny t.h harness)
+make bench      # panorama render benchmark; fails the build if slower than
+                 # CRAFTBOOT_BENCH_MAX_MS (default 3.0 ms/frame @ 1920x1080,
+                 # the target-HW regression bar — see tests/bench_pano.c)
+make diff-pano  # scalar-vs-AVX2 panorama render, must be byte-identical
+make test-asan  # the same 39 cases, rebuilt with -fsanitize=address,undefined
+make fuzz       # fuzz-lite of the efivar load-option + boot_entries.json
+                 # parsers under ASan+UBSan (fixed-seed, deterministic)
+```
+
+[GitHub Actions](.github/workflows/ci.yml) runs on every pull request against
+`main` (and on push to `main`, as a post-merge guard) as two jobs:
+
+- **build + test** — the ship (`make`) and dev (`make dev`) builds must be
+  warning-free (`-Wall -Wextra`; CI greps the build log for `warning:` and
+  fails the job if it finds one), the ship binary must be statically linked,
+  then `make test`, `make bench` (gated at **8 ms/frame** here — shared GitHub
+  runners are slower than the ASUS ROG G713PI target hardware, so the CI
+  ceiling is looser than the 3 ms local default; override either with the
+  `CRAFTBOOT_BENCH_MAX_MS` env var), and `make diff-pano`.
+- **sanitizers + fuzz** — `make test-asan` (the full 39-case suite instrumented
+  with AddressSanitizer + UBSan) and `make fuzz`.
+
+Both jobs need an **AVX2-capable runner**: the ship binary is built
+`-march=x86-64-v3` with no runtime scalar fallback, so CI checks
+`/proc/cpuinfo` for `avx2` up front and fails fast if it's missing, rather
+than segfaulting deep into a build.
+
+`main` is branch-protected: a PR needs green CI and a review from
+[@vlah02](.github/CODEOWNERS) (the repo-wide [CODEOWNERS](.github/CODEOWNERS)
+entry) before it can merge.
+
+---
+
 ## Versioning
 
 `git describe --tags` is the source of truth, injected at build time
@@ -475,6 +521,10 @@ signing/enrollment scripts) goes under `dist/<distro>/`, alongside the
 existing `dist/ubuntu/` — see
 [Porting to another distro](#porting-to-another-distro); `src/` itself stays
 distro-agnostic.
+
+All of the above, plus `make test-asan` and `make fuzz`, run in CI on every
+PR — see [Testing & CI](#testing--ci) for exactly what's enforced. Run them
+locally before opening a PR; `main` is branch-protected on green CI.
 
 ---
 
