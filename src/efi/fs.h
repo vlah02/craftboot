@@ -32,4 +32,16 @@ int fs_list(const CHAR16 *dir, const char *ext, char (*names)[256], int max);
  * Returns a malloc'd, caller-freed device path, or NULL on failure. */
 EFI_DEVICE_PATH_PROTOCOL *dp_for_esp_path(const CHAR16 *path);
 
+/* Derives craftboot.efi's own install directory from
+ * LoadedImage->FilePath (M-B Task 2): walks the device path for the first
+ * Media(0x04)/FilePath(0x04) node, converts its CHAR16 path to ASCII, and
+ * strips the trailing leaf (everything after the last '\') -- e.g.
+ * "\EFI\craftbootv3\grubx64.efi" -> "\EFI\craftbootv3". Lets config/asset
+ * loading work no matter where craftboot.efi is installed (M-A hardcoded
+ * "\EFI\craftboot"). Writes the result into out (cap bytes, NUL-terminated)
+ * and returns 0 on success; on any failure (no LoadedImage, no FilePath, no
+ * FilePath node, path with no directory component, or result too large for
+ * cap) leaves out empty ("") and returns -1. */
+int self_base_dir(char *out, int cap);
+
 #endif /* FS_H */

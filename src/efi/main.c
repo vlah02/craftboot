@@ -43,15 +43,29 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
     sys_init();
     fs_init(image);
 
+    /* Read config/assets relative to wherever craftboot.efi was actually
+     * loaded from (derived from LoadedImage->FilePath), not a hardcoded
+     * M-A-era install path -- M-B installs to "\EFI\craftbootv3", so being
+     * install-location-agnostic matters. Fall back to M-A's layout if the
+     * device path can't be walked (e.g. an odd firmware). */
+    char base[192];
+    if (self_base_dir(base, sizeof base) != 0)
+        snprintf(base, sizeof base, "\\EFI\\craftboot");
+
+    char cfg_path[256];
+    snprintf(cfg_path, sizeof cfg_path, "%s\\boot_entries.json", base);
+    char assets_dir[256];
+    snprintf(assets_dir, sizeof assets_dir, "%s\\assets", base);
+
     config_t cfg;
-    if (config_load(&cfg, "\\EFI\\craftboot\\boot_entries.json") != 0)
+    if (config_load(&cfg, cfg_path) != 0)
         fatal((CHAR16*)L"config load failed\r\n");
 
     display_t *d = display_open(1920, 1080);
     if (!d) fatal((CHAR16*)L"display_open failed\r\n");
     input_t *in = input_open(d);
 
-    const entry_t *e = menu_run(d, in, &cfg, "\\EFI\\craftboot\\assets");
+    const entry_t *e = menu_run(d, in, &cfg, assets_dir);
     if (e) action_execute(e, 1);      /* live handoff (chainload/bootnext/uefi) */
 
     for (;;) BS->Stall(1000000);       /* handoff returned or menu quit: idle */

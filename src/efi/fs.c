@@ -85,6 +85,69 @@ EFI_DEVICE_PATH_PROTOCOL *dp_for_esp_path(const CHAR16 *path) {
     return (EFI_DEVICE_PATH_PROTOCOL*)buf;
 }
 
+int self_base_dir(char *out, int cap) {
+    if (cap <= 0) return -1;
+    out[0] = 0;
+    if (cap < 2) return -1;
+
+    EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *loaded;
+    if (BS->HandleProtocol(g_image, &li_guid, (void**)&loaded) != 0) return -1;
+    if (!loaded->FilePath) return -1;
+
+    /* Walk the device path looking for the first Media(0x04)/FilePath(0x04)
+     * node -- that's the one carrying craftboot.efi's own CHAR16 path. */
+    const uint8_t *p = (const uint8_t*)loaded->FilePath;
+    const EFI_DEVICE_PATH_PROTOCOL *fp_node = NULL;
+    UINTN off = 0;
+    for (;;) {
+        const EFI_DEVICE_PATH_PROTOCOL *node = (const EFI_DEVICE_PATH_PROTOCOL*)(p + off);
+        if (node->Type == END_DEVICE_PATH_TYPE) break;
+        UINT16 nlen = dp_node_len(node);
+        if (nlen < 4) return -1;   /* malformed node: refuse to walk further */
+        if (node->Type == MEDIA_DEVICE_PATH && node->SubType == MEDIA_FILEPATH_DP) {
+            fp_node = node;
+            break;
+        }
+        off += nlen;
+    }
+    if (!fp_node) return -1;
+
+    UINT16 nlen = dp_node_len(fp_node);
+    if (nlen <= 4) return -1;
+    UINTN nchars = ((UINTN)nlen - 4) / 2;
+    const CHAR16 *wpath = (const CHAR16*)((const uint8_t*)fp_node + 4);
+
+    /* CHAR16 -> ASCII (paths on the ESP are plain ASCII), capped at cap-1. */
+    char ascii[256];
+    UINTN maxchars = nchars;
+    if (maxchars > sizeof(ascii) - 1) maxchars = sizeof(ascii) - 1;
+    UINTN alen = 0;
+    for (UINTN i = 0; i < maxchars; i++) {
+        CHAR16 c = wpath[i];
+        if (c == 0) break;
+        ascii[alen++] = (char)(c & 0xff);
+    }
+    if (alen == 0) return -1;
+
+    /* Strip the trailing leaf: truncate at the last '\' to get the dir. */
+    int last_sep = -1;
+    for (UINTN i = 0; i < alen; i++) if (ascii[i] == '\\') last_sep = (int)i;
+    if (last_sep < 0) return -1;   /* no directory component in the path */
+
+    UINTN base_len = (UINTN)last_sep;
+    if (base_len == 0) {
+        /* FilePath was "\leaf.efi" at the volume root -> base is "\". */
+        out[0] = '\\';
+        out[1] = 0;
+        return 0;
+    }
+    if (base_len + 1 > (UINTN)cap) return -1;
+    memcpy(out, ascii, base_len);
+    out[base_len] = 0;
+    return 0;
+}
+
 unsigned char *fs_read(const CHAR16 *path, UINTN *len_out) {
     if (!g_root) return NULL;
 

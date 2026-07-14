@@ -38,9 +38,17 @@
 #
 # Staging layout produced under --esp (default build/esp-efi/):
 #   EFI/BOOT/BOOTX64.EFI              <- --efi (or build/craftboot.efi)
-#   EFI/craftboot/boot_entries.json   <- --config (or repo boot_entries.json)
-#   EFI/craftboot/assets/             <- repo assets/ tree
+#   EFI/BOOT/boot_entries.json        <- --config (or repo boot_entries.json)
+#   EFI/BOOT/assets/                  <- repo assets/ tree
+#   EFI/craftboot/boot_entries.json   <- same --config, staged again (M-A-layout fallback)
+#   EFI/craftboot/assets/             <- repo assets/ tree, staged again (M-A-layout fallback)
 #   <chainload-target basename>       <- --chainload-target, at the ESP root (optional)
+#
+# BOOTX64.EFI is loaded as removable media, so its own LoadedImage->FilePath
+# is "\EFI\BOOT\BOOTX64.EFI" -- craftboot.efi derives its base dir from that
+# (M-B Task 2), so config/assets must live at EFI/BOOT/ for the derived-base
+# path to actually be exercised. The EFI/craftboot/ copy is kept too so the
+# "\EFI\craftboot" fallback path also has something to find if ever needed.
 #
 # `boot` prints the monitor socket path, serial log path, VNC display, and
 # backgrounded QEMU pid, then returns immediately -- QEMU keeps running in
@@ -186,6 +194,14 @@ cmd_boot() {
     rm -rf "$ESP"
     mkdir -p "$ESP/EFI/BOOT" "$ESP/EFI/craftboot"
     cp -f "$EFI_BIN" "$ESP/EFI/BOOT/BOOTX64.EFI"
+    # Derived-base layout (LoadedImage->FilePath for a removable-media boot
+    # is "\EFI\BOOT\BOOTX64.EFI" -> base "\EFI\BOOT"): this is what actually
+    # gets read now that craftboot.efi derives its base dir instead of
+    # hardcoding "\EFI\craftboot".
+    cp -f "$CONFIG" "$ESP/EFI/BOOT/boot_entries.json"
+    cp -a "$REPO/assets" "$ESP/EFI/BOOT/assets"
+    # M-A-layout fallback copy, so "\EFI\craftboot" still works if
+    # self_base_dir() ever fails to walk the device path.
     cp -f "$CONFIG" "$ESP/EFI/craftboot/boot_entries.json"
     cp -a "$REPO/assets" "$ESP/EFI/craftboot/assets"
     if [[ -n "$CHAINLOAD_TARGET" ]]; then
