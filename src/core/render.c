@@ -183,12 +183,23 @@ pano_t *pano_create(const img_t *eq, int out_w, int out_h, float fov_deg) {
     p->baselon = malloc(n * 4); p->row0 = malloc(n * 4); p->row1 = malloc(n * 4);
     p->wv = malloc(n * 2);
     double th = tan(fov_deg * M_PI / 360.0), tv = th * out_h / out_w;
+#ifdef PANO_CYLINDRICAL
+    double half_fov = fov_deg * M_PI / 360.0;         /* fov/2 in radians (cylindrical) */
+#endif
     for (int j = 0; j < out_h; j++) {
         double y = (out_h / 2.0 - (j + 0.5)) / (out_h / 2.0) * tv;
         for (int i = 0; i < out_w; i++) {
+#ifdef PANO_CYLINDRICAL
+            /* Cylindrical: longitude LINEAR in screen-x -> uniform horizontal
+             * sampling density, so the sides stay as sharp as the centre even
+             * at a wide FOV (no tan-magnification). Vertical kept perspective. */
+            double lon = ((i + 0.5) - out_w / 2.0) / (out_w / 2.0) * half_fov;
+            double lat = atan2(y, 1.0);
+#else
             double x = ((i + 0.5) - out_w / 2.0) / (out_w / 2.0) * th;
             double lon = atan2(x, 1.0);
             double lat = atan2(y, sqrt(x * x + 1.0));
+#endif
             double rowf = (0.5 - lat / M_PI) * p->eh;
             if (rowf < 0) rowf = 0;
             if (rowf > p->eh - 1) rowf = p->eh - 1;

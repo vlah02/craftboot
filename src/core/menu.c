@@ -147,7 +147,7 @@ static int scene_load(scene_t *s, const config_t *cfg, const char *assets, int w
         img_t eq = img_load(pano_path);
         if (eq.rgba) {
             char msg[300]; snprintf(msg, sizeof msg, "[craftboot] panorama world: %s", pano_path); plat_log(msg);
-            s->pano = pano_create(&eq, w, h, 140.f);
+            s->pano = pano_create(&eq, w, h, 85.f);
             s->have_pano = 1;
             img_free(&eq);
         }
