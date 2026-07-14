@@ -74,6 +74,18 @@ display_t *display_open(int w, int h) {
 fb_t *display_fb(display_t *d) { return &d->fb; }
 
 void display_flip(display_t *d) {
+    /* Present via the GOP driver's Blt (hardware/optimized path). Direct linear
+     * framebuffer writes are UNCACHED on real GPUs (~22 MB/s -> ~2 fps for a
+     * full-screen 1080p present, measured on the ROG); Blt goes through the
+     * vendor GOP driver and is dramatically faster. Our XRGB8888 back-buffer
+     * matches EFI_GRAPHICS_OUTPUT_BLT_PIXEL ({B,G,R,reserved}) byte-for-byte and
+     * Blt handles the panel's pixel format, so no manual conversion. Delta=0 =>
+     * source rows are Width*4 bytes (our back-buffer is tightly packed). */
+    if (d->gop->Blt(d->gop, d->fb.px, EfiBltBufferToVideo,
+                    0, 0, 0, 0, (UINTN)d->fb.w, (UINTN)d->fb.h, 0) == 0)
+        return;
+    /* Fallback: direct framebuffer write, honoring pitch + pixel format, in
+     * case a firmware's Blt is unavailable/fails (slow, but correct). */
     uint32_t *dst = (uint32_t*)(uintptr_t)d->gop->Mode->FrameBufferBase;
     for (int y = 0; y < d->fb.h; y++) {
         uint32_t *srow = d->fb.px + (size_t)y * (size_t)d->fb.w;
