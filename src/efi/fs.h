@@ -22,4 +22,14 @@ unsigned char *fs_read(const CHAR16 *path, UINTN *len_out);
  * and "."/"..". Returns the count (0 if none), or -1 if `dir` can't be opened. */
 int fs_list(const CHAR16 *dir, const char *ext, char (*names)[256], int max);
 
+/* Builds a full device path to `path` (rooted at the ESP volume, e.g.
+ * L"\\EFI\\craftboot\\target.efi") on the same boot volume craftboot.efi was
+ * loaded from: craftboot's own volume device path (via
+ * LoadedImage->DeviceHandle) with a Media FilePath node for `path` appended
+ * before the terminating END node. Used to hand a chainloaded image a real
+ * device path (LoadedImage->FilePath) instead of NULL, so a real shim/GRUB
+ * second stage can locate its own next stage relative to itself.
+ * Returns a malloc'd, caller-freed device path, or NULL on failure. */
+EFI_DEVICE_PATH_PROTOCOL *dp_for_esp_path(const CHAR16 *path);
+
 #endif /* FS_H */

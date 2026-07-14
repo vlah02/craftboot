@@ -373,6 +373,14 @@ typedef struct {
 #define EFI_DEVICE_PATH_PROTOCOL_GUID \
     { 0x09576e91, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b} }
 
+/* Device-path node Type/SubType constants needed to append a Media FilePath
+ * node to the boot volume's device path (M-B Task 1: device-path LoadImage
+ * so a chainloaded shim can find its own next stage). */
+#define MEDIA_DEVICE_PATH             0x04
+#define MEDIA_FILEPATH_DP             0x04
+#define END_DEVICE_PATH_TYPE          0x7F
+#define END_ENTIRE_DEVICE_PATH_SUBTYPE 0xFF
+
 /* ---- RNG protocol ---- */
 typedef EFI_GUID EFI_RNG_ALGORITHM;
 typedef struct EFI_RNG_PROTOCOL EFI_RNG_PROTOCOL;

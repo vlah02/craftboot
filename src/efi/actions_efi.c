@@ -1,11 +1,12 @@
 /* EFI boot handoff: the freestanding counterpart to src/boot/actions.c's
  * Linux/efivarfs implementation. Three entry types:
- *   - E_CHAINLOAD: read a self-contained loader .efi from the ESP into a
- *     memory buffer, LoadImage (SourceBuffer form) + StartImage -- zero
- *     reboot. Proven by the poc4.c chainload POC; no device path needed for
- *     an M-A target (see Task 9). Building a proper loaded-image device path
- *     for a shim/GRUB second stage that locates ITS OWN next stage is an
- *     M-B concern.
+ *   - E_CHAINLOAD: build a real device path to the target .efi on the boot
+ *     volume (dp_for_esp_path) and LoadImage via the device-path form (no
+ *     SourceBuffer) + StartImage -- zero reboot. The device-path form leaves
+ *     the child's LoadedImage->FilePath populated, so a real shim/GRUB
+ *     second stage can locate its own next stage (M-B Task 1). M-A proved
+ *     the handoff itself via the SourceBuffer form (poc4.c/Task 9), which
+ *     left FilePath NULL -- fine for a self-contained target, not for shim.
  *   - E_BOOTNEXT: enumerate firmware Boot#### load options via
  *     GetNextVariableName/GetVariable, match the UCS-2 description against
  *     e->match, set BootNext, ResetSystem(EfiResetCold).
@@ -37,14 +38,15 @@ static int guid_eq(const EFI_GUID *a, const EFI_GUID *b) {
 int action_execute(const entry_t *e, int live) {
     if (e->type == E_CHAINLOAD) {
         if (!e->path[0]) return -1;
-        CHAR16 w[160]; int i = 0;                 /* ASCII path (single backslashes) -> CHAR16 */
-        for (; e->path[i] && i < 159; i++) w[i] = (CHAR16)(unsigned char)e->path[i];
+        CHAR16 w[160]; int i = 0;                 /* ASCII path, '/' -> '\' -> CHAR16 */
+        for (; e->path[i] && i < 159; i++) w[i] = (CHAR16)(e->path[i] == '/' ? '\\' : (unsigned char)e->path[i]);
         w[i] = 0;
-        UINTN len = 0;
-        unsigned char *buf = fs_read(w, &len);
-        if (!buf || !len) return -1;
+        EFI_DEVICE_PATH_PROTOCOL *dp = dp_for_esp_path(w);
+        if (!dp) return -1;
         EFI_HANDLE child = 0;
-        if (BS->LoadImage(FALSE, g_image, NULL, buf, len, &child) != 0 || !child) return -1;
+        EFI_STATUS s = BS->LoadImage(FALSE, g_image, dp, (void*)0, 0, &child);  /* device-path form */
+        free(dp);
+        if (s != 0 || !child) return -1;
         return BS->StartImage(child, NULL, NULL) == 0 ? 0 : -1;   /* zero-reboot handoff */
     }
     if (e->type == E_BOOTNEXT) {
