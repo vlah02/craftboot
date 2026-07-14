@@ -117,6 +117,7 @@ typedef struct {                     /* everything loaded once per boot */
     int have_pano;
     char splash_txt[120];
     double fps;                      /* measured by menu_run; 0 until known */
+    double render_ms, present_ms;    /* DIAG: per-frame breakdown (remove after perf tuning) */
 } scene_t;
 
 static int scene_load(scene_t *s, const config_t *cfg, const char *assets, int w, int h) {
@@ -193,8 +194,9 @@ static void draw_scene(fb_t *fb, scene_t *s, menustate_t *m, double t, double ya
                          cx - tw / 2, by + (bh - s->button.g[0].h) / 2, col, C_SHADOW);
     }
     /* footer */
-    char ver[64];                    /* room for "Craftboot v2.1-12-gabc1234-dirty  144 fps" */
-    if (s->fps > 0) snprintf(ver, sizeof ver, "Craftboot " CRAFTBOOT_VERSION "  %.0f fps", s->fps);
+    char ver[128];                   /* DIAG: also shows render/present ms breakdown */
+    if (s->fps > 0) snprintf(ver, sizeof ver, "Craftboot " CRAFTBOOT_VERSION "  %.0f fps  R%.0f P%.0f",
+                             s->fps, s->render_ms, s->present_ms);
     else            snprintf(ver, sizeof ver, "Craftboot " CRAFTBOOT_VERSION);
     draw_text_shadow(fb, &s->small, ver, 8, 6, C_WHITE, C_SHADOW);
     draw_text_shadow(fb, &s->small, "Up/Down + Enter  -  Esc to go back",
@@ -264,8 +266,12 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
         if (m.countdown >= 0 && m.countdown <= 0.0)
             chosen = ms_default_entry(&m);
         double yaw = 0.7 + (t - t0) / 140.0;          /* PANO_START + t/PANO_LOOP */
+        double tr0 = now_s();
         draw_scene(fb, &s, &m, t, yaw);
+        double tr1 = now_s();
         display_flip(d);
+        s.render_ms = (tr1 - tr0) * 1000.0;           /* DIAG: split render vs present */
+        s.present_ms = (now_s() - tr1) * 1000.0;
         /* smoothed instantaneous fps: shows within a frame or two, no 5s delay.
            The first iteration's dt is the startup gap (near zero) — skip it. */
         if (dt > 0) {

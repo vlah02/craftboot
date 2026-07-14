@@ -394,4 +394,25 @@ struct EFI_RNG_PROTOCOL {
 #define EFI_RNG_PROTOCOL_GUID \
     { 0x3152bca5, 0xeade, 0x433d, {0x86, 0x2e, 0xc0, 0x1c, 0xdc, 0x29, 0x1f, 0x44} }
 
+/* ---- DXE Services (found via the configuration table) ----
+ * Used to mark the GOP framebuffer write-combining (EFI_MEMORY_WC) so bulk
+ * writes to it are fast; some firmware maps it uncached (UC) by default, which
+ * makes a full-screen present crawl. SetMemorySpaceAttributes is the 6th member
+ * after the header (PI spec order): Add/Allocate/Free/Remove/GetDescriptor,
+ * then SetMemorySpaceAttributes. */
+#define EFI_MEMORY_WC 0x0000000000000002ULL
+#define EFI_DXE_SERVICES_TABLE_GUID \
+    { 0x05ad34ba, 0x6f02, 0x4214, {0x95, 0x2e, 0x4d, 0xa0, 0x39, 0x8e, 0x2b, 0xb9} }
+typedef EFI_STATUS (EFIAPI *EFI_SET_MEMORY_SPACE_ATTRIBUTES)(UINT64 BaseAddress, UINT64 Length, UINT64 Attributes);
+typedef struct {
+    EFI_TABLE_HEADER Hdr;
+    void* AddMemorySpace;
+    void* AllocateMemorySpace;
+    void* FreeMemorySpace;
+    void* RemoveMemorySpace;
+    void* GetMemorySpaceDescriptor;
+    EFI_SET_MEMORY_SPACE_ATTRIBUTES SetMemorySpaceAttributes;
+    /* remaining members (GetMemorySpaceMap, IO space, dispatcher, ...) unused */
+} EFI_DXE_SERVICES;
+
 #endif

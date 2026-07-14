@@ -11,6 +11,24 @@
 #include "platform/display.h"
 
 extern EFI_BOOT_SERVICES *BS;
+extern EFI_SYSTEM_TABLE *ST;
+
+/* Best-effort: mark the GOP framebuffer write-combining via DXE Services so a
+ * full-screen present isn't crippled by an uncached (UC) firmware mapping
+ * (observed as ~2 fps on real hardware; QEMU maps it as fast RAM). Silently
+ * ignore any failure (table absent, or WC not a capability of the range). */
+static void fb_set_write_combining(uint64_t base, uint64_t size) {
+    EFI_GUID dxeg = EFI_DXE_SERVICES_TABLE_GUID;
+    EFI_DXE_SERVICES *dxe = NULL;
+    for (UINTN i = 0; i < ST->NumberOfTableEntries; i++) {
+        if (memcmp(&ST->ConfigurationTable[i].VendorGuid, &dxeg, sizeof(EFI_GUID)) == 0) {
+            dxe = (EFI_DXE_SERVICES*)ST->ConfigurationTable[i].VendorTable;
+            break;
+        }
+    }
+    if (dxe && dxe->SetMemorySpaceAttributes)
+        dxe->SetMemorySpaceAttributes(base, size, EFI_MEMORY_WC);
+}
 
 struct display {
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
@@ -46,6 +64,8 @@ display_t *display_open(int w, int h) {
     d.pitch_px = mi->PixelsPerScanLine;
     d.ry = mi->VerticalResolution;
     d.bgr = (mi->PixelFormat == PixelBlueGreenRedReserved8BitPerColor);
+
+    fb_set_write_combining(d.gop->Mode->FrameBufferBase, d.gop->Mode->FrameBufferSize);
 
     d.fb.px = malloc((size_t)d.fb.w * (size_t)d.fb.h * 4);
     return d.fb.px ? &d : NULL;
