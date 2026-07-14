@@ -115,6 +115,8 @@ typedef struct {                     /* everything loaded once per boot */
     img_t logo, btn, btn_hi, dirt, splash_rot;
     pano_t *pano;
     int have_pano;
+    int pano_blur;                   /* screen-space blur radius for the pano (0 = none) */
+    uint32_t *blur_tmp;              /* persistent scratch for fb_blur (alloc'd in scene_load) */
     char splash_txt[120];
     double fps;                      /* measured by menu_run; 0 until known */
     double render_ms, present_ms;    /* DIAG: per-frame breakdown (remove after perf tuning) */
@@ -147,8 +149,16 @@ static int scene_load(scene_t *s, const config_t *cfg, const char *assets, int w
         img_t eq = img_load(pano_path);
         if (eq.rgba) {
             char msg[300]; snprintf(msg, sizeof msg, "[craftboot] panorama world: %s", pano_path); plat_log(msg);
-            s->pano = pano_create(&eq, w, h, 85.f);
+            s->pano = pano_create(&eq, w, h, 140.f, 30.f);
             s->have_pano = 1;
+            /* 1.12 classic is a low-res (256^2-face) source; at a wide FOV it goes
+             * sharp-centre / smeared-sides. A uniform screen-space blur makes it
+             * read as an intentional soft look. Other themes are crisp -> no blur. */
+            if (strstr(pano_path, "1.12_classic")) {
+                s->pano_blur = (int)(w * 0.006);              /* ~11px radius @1080p */
+                s->blur_tmp = malloc((size_t)w * h * 4);      /* persistent: pre-arena-mark */
+                if (!s->blur_tmp) s->pano_blur = 0;
+            }
             img_free(&eq);
         }
         pick_logo(assets, pano_path, logo_path, sizeof logo_path);
@@ -171,6 +181,7 @@ static int scene_load(scene_t *s, const config_t *cfg, const char *assets, int w
 static void draw_scene(fb_t *fb, scene_t *s, menustate_t *m, double t, double yaw_turns) {
     if (s->have_pano) pano_render(s->pano, fb, yaw_turns);
     else fb_fill(fb, 0x181A20);
+    if (s->pano_blur) fb_blur(fb, s->pano_blur, s->blur_tmp);   /* soften low-res panoramas uniformly */
     int w = fb->w, h = fb->h;
     int logo_y = (int)(h * 0.24) - s->logo.h / 2;
     if (s->logo.rgba) blit(fb, &s->logo, (w - s->logo.w) / 2, logo_y);

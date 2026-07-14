@@ -6,6 +6,10 @@ typedef struct { uint8_t *rgba; int w, h; } img_t;
 
 uint32_t mix_xrgb(uint32_t a, uint32_t b, unsigned w);
 void fb_fill(fb_t *f, uint32_t c);
+/* Uniform separable box blur of the whole framebuffer, radius px. `tmp` is a
+ * caller-owned scratch buffer of at least f->w*f->h uint32s (the intermediate
+ * horizontal pass). Edges clamp-extend. XRGB in/out; alpha byte zeroed. */
+void fb_blur(fb_t *f, int radius, uint32_t *tmp);
 void fill_rect(fb_t *f, int x, int y, int w, int h, uint32_t c);
 void blit(fb_t *f, const img_t *s, int x, int y);
 void blit_scaled(fb_t *f, const img_t *s, int x, int y, int w, int h);
@@ -15,7 +19,9 @@ void blit_9slice(fb_t *f, const img_t *s, int x, int y, int w, int h);
 
 /* panorama (Task 7) */
 typedef struct pano pano_t;
-pano_t *pano_create(const img_t *equirect, int out_w, int out_h, float fov_deg);
+/* pitch_deg > 0 tilts the view DOWN (horizon rises in frame, more ground shown);
+ * 0 keeps the camera level with the horizon. */
+pano_t *pano_create(const img_t *equirect, int out_w, int out_h, float fov_deg, float pitch_deg);
 void pano_render(pano_t *p, fb_t *out, double yaw_turns);
 void pano_destroy(pano_t *p);
 

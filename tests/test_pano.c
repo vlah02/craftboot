@@ -15,7 +15,7 @@ static img_t make_src(int ew, int eh) {          /* column index encoded in R an
 static int uniform_in_uniform_out(void) {
     img_t s = { malloc(256 * 128 * 4), 256, 128 };
     for (long i = 0; i < 256 * 128; i++) memcpy(&s.rgba[i * 4], "\x30\x60\x90\xff", 4);
-    pano_t *p = pano_create(&s, 80, 45, 140.f);
+    pano_t *p = pano_create(&s, 80, 45, 140.f, 0.f);
     uint32_t buf[80 * 45]; fb_t fb = { buf, 80, 45 };
     pano_render(p, &fb, 0.37);
     for (int i = 0; i < 80 * 45; i++) OK(buf[i] == 0x306090);
@@ -24,7 +24,7 @@ static int uniform_in_uniform_out(void) {
 }
 static int yaw_wraps_full_turn(void) {
     img_t s = make_src(256, 128);
-    pano_t *p = pano_create(&s, 80, 45, 140.f);
+    pano_t *p = pano_create(&s, 80, 45, 140.f, 0.f);
     uint32_t a[80 * 45], b[80 * 45];
     fb_t fa = { a, 80, 45 }, fbb = { b, 80, 45 };
     pano_render(p, &fa, 0.23);
@@ -37,7 +37,7 @@ static int yaw_wraps_full_turn(void) {
 }
 static int center_maps_to_yaw_column(void) {
     img_t s = make_src(256, 128);
-    pano_t *p = pano_create(&s, 81, 45, 140.f);
+    pano_t *p = pano_create(&s, 81, 45, 140.f, 0.f);
     uint32_t buf[81 * 45]; fb_t fb = { buf, 81, 45 };
     pano_render(p, &fb, 0.25);            /* center ray lon=0 -> col = 0.25*EW = 64 */
     uint32_t c = buf[22 * 81 + 40];
@@ -53,7 +53,7 @@ static int uniform_square_output(void) {
      * so every row is pure AVX2 body (no scalar tail). */
     img_t s = { malloc(200 * 100 * 4), 200, 100 };
     for (long i = 0; i < 200 * 100; i++) memcpy(&s.rgba[i * 4], "\x22\x44\x88\xff", 4);
-    pano_t *p = pano_create(&s, 64, 64, 100.f);
+    pano_t *p = pano_create(&s, 64, 64, 100.f, 0.f);
     uint32_t buf[64 * 64]; fb_t fb = { buf, 64, 64 };
     pano_render(p, &fb, 0.5);
     for (int i = 0; i < 64 * 64; i++) OK(buf[i] == 0x224488);

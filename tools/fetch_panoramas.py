@@ -17,7 +17,7 @@ Requires: python3 + Pillow + numpy + network (piston-meta.mojang.com + CDN).
 """
 import io, json, os, sys, urllib.request, zipfile
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 
 MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 RESOURCES = "https://resources.download.minecraft.net"
@@ -83,12 +83,15 @@ def main():
         eq = cube_to_equirect(faces_for(manifest, ver, src), EQUI_W)
         eq.save(os.path.join(outdir, f"{theme}.jpg"), "JPEG", quality=90)
         print(f"{theme:24s} {ver:8s} {src:5s} -> {theme}.jpg {eq.size}")
-    # 1.12 classic: keep the pristine source under assets_src/, ship a blurred copy.
+    # 1.12 classic: the 1.8-1.12 panorama faces are only 256x256 in the jar, so
+    # this equirect (assets_src/) can't reach the 1024^2-sourced sharpness of the
+    # 1.13+ themes. Shipped verbatim (no blur) -- at a wide FOV a blur only made
+    # the low-res source look worse, not better.
     src12 = os.path.join(repo, "assets_src", "1.12_classic.jpg")
     if os.path.isfile(src12):
-        Image.open(src12).convert("RGB").filter(ImageFilter.GaussianBlur(2.2)) \
-            .save(os.path.join(outdir, "1.12_classic.jpg"), "JPEG", quality=90)
-        print("1.12_classic            (blurred from assets_src/)")
+        Image.open(src12).convert("RGB") \
+            .save(os.path.join(outdir, "1.12_classic.jpg"), "JPEG", quality=92)
+        print("1.12_classic            (verbatim from assets_src/, no blur)")
     else:
         print("1.12_classic            (no assets_src/ source; leaving existing file)")
 

@@ -6,7 +6,7 @@
 int main(void) {
     img_t eq = img_load("assets/panoramas/1.16_nether.jpg");
     if (!eq.rgba) { fprintf(stderr, "load failed\n"); return 1; }
-    pano_t *p = pano_create(&eq, 1920, 1080, 140.f);
+    pano_t *p = pano_create(&eq, 1920, 1080, 140.f, 0.f);
     fb_t fb = { malloc((size_t)1920 * 1080 * 4), 1920, 1080 };
     struct timespec a, b;
     pano_render(p, &fb, 0.1);                      /* warm */

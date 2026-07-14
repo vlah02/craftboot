@@ -15,7 +15,7 @@ int main(void) {
     img_t eq = img_load("assets/panoramas/1.16_nether.jpg");
     if (!eq.rgba) { fprintf(stderr, "diff_pano: load failed\n"); return 1; }
     int W = 1923, H = 45;
-    pano_t *p = pano_create(&eq, W, H, 140.f);
+    pano_t *p = pano_create(&eq, W, H, 140.f, 0.f);
     uint32_t *buf = malloc((size_t)W * H * 4);
     fb_t fb = { buf, W, H };
     const double yaws[] = { 0.0, 0.37, 0.73 };
