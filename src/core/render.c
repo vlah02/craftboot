@@ -2,7 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#ifndef PANO_NO_THREADS
+#ifdef PANO_MP_SERVICES
+#include "platform/plat.h"      /* EFI: spread the render across cores via plat_run_on_all */
+#else
 #include <unistd.h>
 #include <pthread.h>
 #endif
@@ -170,8 +172,8 @@ struct pano {
 pano_t *pano_create(const img_t *eq, int out_w, int out_h, float fov_deg) {
     pano_t *p = calloc(1, sizeof *p);
     p->ew = eq->w; p->eh = eq->h; p->w = out_w; p->h = out_h;
-#ifdef PANO_NO_THREADS
-    p->nthreads = 1;
+#ifdef PANO_MP_SERVICES
+    p->nthreads = 1;                    /* unused: plat_run_on_all uses all CPUs */
 #else
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
     p->nthreads = ncpu > 8 ? 8 : (ncpu < 1 ? 1 : (int)ncpu);
@@ -279,12 +281,21 @@ static void *render_slice(void *arg) {
     }
     return NULL;
 }
+#ifdef PANO_MP_SERVICES
+typedef struct { pano_t *p; fb_t *out; int64_t yawfx; } mpctx_t;
+static void render_slice_mp(void *v, int idx, int nproc) {
+    mpctx_t *c = (mpctx_t *)v;
+    long h = c->p->h;
+    slice_t sl = { c->p, c->out, c->yawfx, (int)(h * idx / nproc), (int)(h * (idx + 1) / nproc) };
+    render_slice(&sl);
+}
+#endif
 void pano_render(pano_t *p, fb_t *out, double yaw_turns) {
     double t = fmod(yaw_turns, 1.0); if (t < 0) t += 1.0;
     int64_t yawfx = (int64_t)(t * p->ew * 65536.0);
-#ifdef PANO_NO_THREADS
-    slice_t sl = { p, out, yawfx, 0, p->h };
-    render_slice(&sl);
+#ifdef PANO_MP_SERVICES
+    mpctx_t c = { p, out, yawfx };
+    plat_run_on_all(render_slice_mp, &c);   /* every core renders a row-slice */
 #else
     int nt = p->nthreads;
     pthread_t th[8]; slice_t sl[8];

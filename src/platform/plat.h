@@ -21,3 +21,7 @@ void     plat_log(const char *msg);
  * iteration, AFTER one-shot asset loading. (Host: no-op -- real malloc/free;
  * EFI: rolls the bump arena back to a mark taken on the first call.) */
 void     plat_scratch_reset(void);
+/* Run fn(ctx, idx, nproc) on ALL CPUs concurrently (idx = 0..nproc-1), blocking
+ * until every core finishes. Used to spread the panorama render across cores.
+ * (EFI: MP Services StartupAllAPs + the BSP; only the EFI render path uses it.) */
+void     plat_run_on_all(void (*fn)(void *ctx, int idx, int nproc), void *ctx);

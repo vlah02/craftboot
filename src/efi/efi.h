@@ -423,4 +423,22 @@ typedef struct {
     /* remaining members (GetMemorySpaceMap, IO space, dispatcher, ...) unused */
 } EFI_DXE_SERVICES;
 
+/* ---- MP Services (multiprocessor) — spread the panorama render across cores ---- */
+#define EFI_MP_SERVICES_PROTOCOL_GUID \
+    { 0x3fdda605, 0xa76e, 0x4f46, {0xad, 0x29, 0x12, 0xf4, 0x53, 0x1b, 0x3d, 0x08} }
+typedef VOID (EFIAPI *EFI_AP_PROCEDURE)(VOID *ProcedureArgument);
+typedef struct EFI_MP_SERVICES_PROTOCOL EFI_MP_SERVICES_PROTOCOL;
+typedef EFI_STATUS (EFIAPI *EFI_MP_GET_NUMBER_OF_PROCESSORS)(EFI_MP_SERVICES_PROTOCOL*, UINTN*, UINTN*);
+typedef EFI_STATUS (EFIAPI *EFI_MP_STARTUP_ALL_APS)(EFI_MP_SERVICES_PROTOCOL*, EFI_AP_PROCEDURE, BOOLEAN, EFI_EVENT, UINTN, VOID*, UINTN**);
+typedef EFI_STATUS (EFIAPI *EFI_MP_WHOAMI)(EFI_MP_SERVICES_PROTOCOL*, UINTN*);
+struct EFI_MP_SERVICES_PROTOCOL {
+    EFI_MP_GET_NUMBER_OF_PROCESSORS GetNumberOfProcessors;
+    void* GetProcessorInfo;
+    EFI_MP_STARTUP_ALL_APS StartupAllAPs;
+    void* StartupThisAP;
+    void* SwitchBSP;
+    void* EnableDisableAP;
+    EFI_MP_WHOAMI WhoAmI;
+};
+
 #endif

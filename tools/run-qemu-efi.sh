@@ -228,7 +228,7 @@ cmd_boot() {
     env -i PATH="$PATH" HOME="${HOME:-/root}" \
         /usr/bin/qemu-system-x86_64 \
         "${kvm_args[@]}" \
-        -machine q35 -m 2048 \
+        -machine q35 -m 2048 -smp "${SMP:-8}" \
         -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
         -drive if=pflash,format=raw,unit=1,file="$vars_copy" \
         -drive format=raw,file="fat:rw:$ESP" \
