@@ -14,9 +14,13 @@ static int loads_real_config(void) {
      * to single-backslash EFI separators (what EFI_FILE_PROTOCOL.Open needs). */
     OK(strcmp(c.menu[0][1].path, "\\EFI\\ubuntudirect\\shimx64.efi") == 0);
     OK(c.menu[0][2].type == E_SUBMENU);
-    OK(c.nmenu[1] == 2);
-    OK(c.menu[1][0].type == E_UEFI);
-    OK(c.menu[1][1].type == E_BACK);
+    OK(c.nmenu[1] == 4);
+    OK(c.menu[1][0].type == E_CHAINLOAD);
+    OK(strcmp(c.menu[1][0].path, "\\EFI\\ubunturecovery\\shimx64.efi") == 0);
+    OK(c.menu[1][1].type == E_CHAINLOAD);
+    OK(strcmp(c.menu[1][1].path, "\\EFI\\memtest\\mtx64.efi") == 0);
+    OK(c.menu[1][2].type == E_UEFI);
+    OK(c.menu[1][3].type == E_BACK);
     return 0;
 }
 static int missing_file_fails(void) {

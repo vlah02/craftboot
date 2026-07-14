@@ -7,8 +7,10 @@
       { "id": "extras",  "label": "Extras",  "type": "submenu", "target": "extras" }
     ],
     "extras": [
-      { "id": "uefi", "label": "UEFI Firmware Settings", "type": "uefi" },
-      { "id": "back", "label": "Back", "type": "back" }
+      { "id": "recovery", "label": "Ubuntu (recovery)", "type": "chainload", "path": "\\EFI\\ubunturecovery\\shimx64.efi" },
+      { "id": "memtest",  "label": "Memtest86+",        "type": "chainload", "path": "\\EFI\\memtest\\mtx64.efi" },
+      { "id": "uefi",     "label": "UEFI Firmware Settings", "type": "uefi" },
+      { "id": "back",     "label": "Back", "type": "back" }
     ]
   }
 }

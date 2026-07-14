@@ -19,8 +19,8 @@ static int submenu_and_back(void) {
     m.index = 2;                                  /* Extras */
     OK(ms_select(&m) == NULL);
     OK(m.level == 1 && m.index == 0);
-    int n; ms_entries(&m, &n); OK(n == 2);
-    m.index = 1;                                  /* Back */
+    int n; ms_entries(&m, &n); OK(n == 4);
+    m.index = 3;                                  /* Back */
     OK(ms_select(&m) == NULL);
     OK(m.level == 0);
     OK(ms_back(&m) == 0);                         /* at root -> quit signal */
