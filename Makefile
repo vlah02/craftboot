@@ -117,9 +117,20 @@ EFI_CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar
               -DSTBI_NO_STDIO -DSTBI_NO_LINEAR
 EFI_LDFLAGS := -nostdlib -Wl,-dll -shared -Wl,--subsystem,10 -e efi_main
 EFI_SRC := src/efi/main.c src/efi/mini_libc.c src/efi/display_efi.c src/efi/input_efi.c \
-           src/efi/fs.c src/efi/sys.c src/efi/actions_efi.c src/efi/plat_efi.c \
+           src/efi/fs.c src/efi/sys.c src/efi/actions_efi.c src/efi/plat_efi.c src/efi/sbat.c \
            src/core/efivar.c src/core/render.c src/core/menu.c src/core/assets.c
-efi: ; @mkdir -p build; $(MINGW) $(EFI_CFLAGS) $(EFI_SRC) -o build/craftboot.efi $(EFI_LDFLAGS)
+# Two things are required for Ubuntu's shim (ships 15.8) to load the MOK-signed
+# image:
+#   1. .sbat section: shim 15.8 REJECTS any second stage without a valid .sbat
+#      section (Security Violation), regardless of signature. src/efi/sbat.c
+#      defines it so the LINKER places it at a real RVA inside SizeOfImage
+#      (objcopy --add-section lands it OUTSIDE the mapped image -> shim can't
+#      see it). ukify-built UKIs carry one; a hand-linked mingw PE otherwise not.
+#   2. --strip-all: drop mingw's trailing COFF symbol/string-table overlay (past
+#      the last PE section) that otherwise trips shim's Authenticode hashing.
+MINGW_OBJCOPY := x86_64-w64-mingw32-objcopy
+efi: ; @mkdir -p build; $(MINGW) $(EFI_CFLAGS) $(EFI_SRC) -o build/craftboot.efi $(EFI_LDFLAGS); \
+	$(MINGW_OBJCOPY) --strip-all build/craftboot.efi
 .PHONY: efi
 # (Core/EFI source list grows in later tasks.)
 
