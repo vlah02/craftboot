@@ -28,7 +28,23 @@ static void fatal(const CHAR16 *msg) {
     for (;;) BS->Stall(1000000);
 }
 
+/* Firmware leaves SSE/AVX state disabled in Boot Services (CR4.OSXSAVE=0), so
+ * AVX2 — and even compiler SSE/AVX autovectorization — would #UD. Enable it
+ * ourselves before any SIMD runs: set CR4.OSFXSR|OSXMMEXCPT|OSXSAVE, then
+ * XCR0 = x87|SSE|AVX. Kept as the very first thing efi_main does (opaque asm,
+ * nothing vectorizable precedes it) so all later code may use AVX2 safely.
+ * This is what lets the AVX2 panorama path run — ~2 fps scalar-unoptimized on
+ * the real GPU jumps once render is AVX2 + -O2 and present is via GOP Blt. */
+static void simd_enable(void) {
+    uint64_t cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= (1u << 9) | (1u << 10) | (1u << 18);   /* OSFXSR | OSXMMEXCPT | OSXSAVE */
+    __asm__ volatile("mov %0, %%cr4" :: "r"(cr4) : "memory");
+    __asm__ volatile("xsetbv" :: "a"(7u), "d"(0u), "c"(0u));  /* XCR0 = x87|SSE|AVX */
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st) {
+    simd_enable();
     ST = st;
     BS = st->BootServices;
     g_image = image;

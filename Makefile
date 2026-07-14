@@ -111,8 +111,8 @@ MINGW := x86_64-w64-mingw32-gcc
 # footer and the host binary's footer always agree. Pre-tag this prints the
 # describe string (e.g. v2.1-NN-gSHA); it reads v3.0 once the v3.0 tag lands.
 EFI_CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar \
-              -mno-red-zone -mno-stack-arg-probe -Wall -Wextra -Isrc -Isrc/vendor \
-              -DPANO_NO_AVX2 -DPANO_NO_THREADS -DEFI -DCRAFTBOOT_VERSION_GIT=\"$(VERSION)\" \
+              -mno-red-zone -mno-stack-arg-probe -O2 -mavx2 -Wall -Wextra -Isrc -Isrc/vendor \
+              -DPANO_NO_THREADS -DEFI -DCRAFTBOOT_VERSION_GIT=\"$(VERSION)\" \
               -D__USE_MINGW_ANSI_STDIO=0 -DNDEBUG \
               -DSTBI_NO_STDIO -DSTBI_NO_LINEAR
 EFI_LDFLAGS := -nostdlib -Wl,-dll -shared -Wl,--subsystem,10 -e efi_main
