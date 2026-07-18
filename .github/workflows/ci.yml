@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   lint:
-    name: lint scripts + tools
+    name: lint scripts + config
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,12 +30,19 @@ jobs:
           for s in "${scripts[@]}"; do echo "bash -n $s"; bash -n "$s"; done
 
       # Byte-compile the Python asset tools (bake_font / build_panorama /
-      # make_demo / reencode_panoramas) so a syntax error in a contributor
-      # helper is caught in CI instead of at asset-regen time.
+      # fetch_panoramas) so a syntax error in a contributor helper is caught
+      # in CI instead of at asset-regen time.
       - name: Python tools byte-compile (py_compile)
         run: |
           python3 --version
           python3 -m py_compile tools/*.py
+
+      # boot_entries.json is shipped verbatim to the ESP and parsed by the
+      # firmware app, where a syntax error means a menu that won't load and no
+      # console to debug it. tests/test_config.c parses this same file, but a
+      # JSON-level check gives a clearer failure than a parser assertion.
+      - name: Boot config is valid JSON
+        run: python3 -m json.tool boot_entries.json > /dev/null
 
   build-test:
     name: build + test
@@ -48,30 +55,22 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libdrm-dev libsdl2-dev zstd
+          sudo apt-get install -y build-essential
 
       - name: AVX2 preflight
         run: |
-          # the shipped binary is -march=x86-64-v3 and has no runtime scalar
-          # fallback, so the runner itself must be able to execute AVX2.
+          # the core is built -march=x86-64-v3 with no runtime scalar fallback,
+          # so the runner itself must be able to execute AVX2.
           grep -q avx2 /proc/cpuinfo || { echo "::error::runner CPU lacks AVX2"; exit 1; }
 
-      - name: Build ship binary (must be warning-free)
+      # There is no host binary to ship (the artifact is the EFI app, built in
+      # the efi-build job); this compiles the platform-agnostic core plus the
+      # test harnesses and runs them, gating on zero warnings.
+      - name: Unit tests (must be warning-free)
         run: |
           make clean
-          make 2>&1 | tee build-ship.log
-          ! grep -qi 'warning:' build-ship.log
-
-      - name: Build dev binary (must be warning-free)
-        run: |
-          make dev 2>&1 | tee build-dev.log
-          ! grep -qi 'warning:' build-dev.log
-
-      - name: Confirm ship binary is statically linked
-        run: file build/craftboot | grep -q 'statically linked'
-
-      - name: Unit tests
-        run: make test
+          make test 2>&1 | tee build-test.log
+          ! grep -qi 'warning:' build-test.log
 
       - name: Panorama performance gate (< 3 ms/frame @ 1080p target; generous on shared runners)
         run: make bench
@@ -96,7 +95,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libdrm-dev libsdl2-dev zstd
+          sudo apt-get install -y build-essential
 
       - name: AVX2 preflight
         run: |
@@ -112,11 +111,11 @@ jobs:
         run: make fuzz
 
   efi-build:
-    name: efi app build (warning-free PE32+)
+    name: efi app build (shim-loadable PE32+)
     runs-on: ubuntu-latest
-    # OVMF/QEMU boot is NOT exercised here (flaky in CI) -- it's a local gate
-    # via tools/run-qemu-efi.sh. This job only proves `make efi` is
-    # warning-free and produces a real PE32+ EFI application.
+    # OVMF/QEMU boot is NOT exercised here (flaky in CI) -- that's a local gate
+    # via tools/run-qemu-efi.sh. This job proves `make efi` is warning-free and
+    # produces an image Ubuntu's shim will actually load.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,7 +124,7 @@ jobs:
       - name: Install mingw cross toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64
+          sudo apt-get install -y gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
 
       - name: Build EFI app (must be warning-free)
         run: |
@@ -134,3 +133,33 @@ jobs:
 
       - name: Confirm PE32+ EFI application
         run: file build/craftboot.efi | grep -q 'PE32+'
+
+      # Regression guard: shim 15.8 REJECTS a second stage with no .sbat section
+      # ("Security Violation"), regardless of signature. src/efi/sbat.c defines
+      # it so the LINKER places it at a real RVA inside SizeOfImage -- an
+      # objcopy --add-section lands it outside the mapped image, where shim
+      # cannot see it. This check would have caught that failure directly.
+      - name: .sbat section present (shim 15.8 requirement)
+        run: |
+          x86_64-w64-mingw32-objdump -h build/craftboot.efi | tee sections.txt
+          grep -q '\.sbat' sections.txt || {
+            echo "::error::no .sbat section -- shim will refuse to load this image"; exit 1; }
+
+      # Regression guard: mingw appends a COFF symbol/string table past the last
+      # PE section. That trailing overlay is not covered by the PE headers and
+      # breaks shim's Authenticode hashing ("gaps between PE/COFF sections"),
+      # so the Makefile runs objcopy --strip-all. Verify it actually happened.
+      - name: No trailing COFF symbol overlay (Authenticode requirement)
+        run: |
+          out="$(x86_64-w64-mingw32-nm build/craftboot.efi 2>&1 || true)"
+          echo "$out"
+          echo "$out" | grep -q 'no symbols' || {
+            echo "::error::symbol table still present -- shim Authenticode hashing will fail"; exit 1; }
+
+      # Handy for testing a PR build in QEMU without a local mingw toolchain.
+      - name: Upload craftboot.efi
+        uses: actions/upload-artifact@v4
+        with:
+          name: craftboot-efi
+          path: build/craftboot.efi
+          if-no-files-found: error

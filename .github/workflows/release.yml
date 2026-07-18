@@ -1,0 +1,62 @@
+name: Release
+
+# Publishes the built UEFI application whenever a version tag is pushed.
+# The tag is also what `git describe --tags` injects as the on-screen version
+# (see Makefile / src/core/version.h), so the binary self-reports the release
+# it came from.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write        # needed to create the release + upload assets
+
+jobs:
+  release:
+    name: build + publish craftboot.efi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # tags, so `git describe` yields the real version
+
+      - name: Install mingw cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+
+      - name: Build EFI app (must be warning-free)
+        run: |
+          make efi 2>&1 | tee build-efi.log
+          ! grep -qi 'warning:' build-efi.log
+
+      # Same gates as CI: an image that shim refuses to load is not releasable.
+      - name: Verify shim-loadable image
+        run: |
+          file build/craftboot.efi | grep -q 'PE32+'
+          x86_64-w64-mingw32-objdump -h build/craftboot.efi | grep -q '\.sbat'
+          x86_64-w64-mingw32-nm build/craftboot.efi 2>&1 | grep -q 'no symbols'
+
+      - name: Confirm the binary self-reports this tag
+        run: |
+          strings build/craftboot.efi | grep -q "Craftboot ${GITHUB_REF_NAME}" || {
+            echo "::error::binary does not report ${GITHUB_REF_NAME} -- check git describe/tags"; exit 1; }
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          Craftboot UEFI application.
+
+          `craftboot.efi` here is **unsigned**. Secure Boot requires it to be
+          signed with *your own* MOK key, which is per-machine — so install it
+          with the installer rather than copying it to the ESP by hand:
+
+              sudo ./dist/ubuntu/efi-install.sh
+
+          That generates/reuses your MOK key, signs the binary, installs it
+          alongside Ubuntu's shim, and registers the firmware boot entry.
+          EOF
+          gh release create "${GITHUB_REF_NAME}" build/craftboot.efi \
+            --title "${GITHUB_REF_NAME}" --notes-file notes.md
