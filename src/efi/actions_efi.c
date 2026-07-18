@@ -19,7 +19,7 @@
 #include "efi/fs.h"
 #include "core/assets.h"
 #include "core/efivar.h"
-#include "boot/actions.h"
+#include "core/actions.h"
 
 extern EFI_SYSTEM_TABLE *ST;
 extern EFI_BOOT_SERVICES *BS;

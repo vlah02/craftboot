@@ -9,7 +9,7 @@
 #   sudo ./dist/ubuntu/efi-install.sh --uninstall   remove "Craftboot v3" only
 #        ./dist/ubuntu/efi-install.sh --print       show the install plan, no mutation, no root
 #
-# Reuses proven idioms from uki-setup.sh (MOK genkey/enroll check, dedup loop)
+# Handles MOK genkey/enroll checks and firmware-entry dedup inline
 # and ubuntu-direct.sh (esp_disk_part, the ukify build pattern).
 set -euo pipefail
 

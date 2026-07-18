@@ -224,7 +224,6 @@ cmd_boot() {
 
     # Run in a clean environment (snap-launched shells leak an
     # LD_LIBRARY_PATH that breaks the system qemu's glibc), same fix as
-    # tools/run-qemu.sh.
     env -i PATH="$PATH" HOME="${HOME:-/root}" \
         /usr/bin/qemu-system-x86_64 \
         "${kvm_args[@]}" \

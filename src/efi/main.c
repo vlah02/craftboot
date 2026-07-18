@@ -9,7 +9,7 @@
 #include "core/menu.h"
 #include "platform/display.h"
 #include "platform/input.h"
-#include "boot/actions.h"
+#include "core/actions.h"
 
 EFI_SYSTEM_TABLE *ST;
 EFI_BOOT_SERVICES *BS;

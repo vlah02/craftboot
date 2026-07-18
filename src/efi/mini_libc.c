@@ -150,7 +150,6 @@ double m_floor(double x) {
     if (x < 0.0 && t != x) t -= 1.0;
     return t;
 }
-float m_fabsf(float x) { return x < 0 ? -x : x; }
 
 /* 6-term Taylor core, accurate to ~1e-6 on [-pi/2, pi/2] and NOT beyond -- the
  * series diverges hard for larger arguments. m_sin/m_cos below MUST reduce
