@@ -13,7 +13,10 @@ concurrency:
 
 jobs:
   lint:
-    name: lint scripts + config
+    # NOTE: this name is a required status check in main's branch protection.
+    # Renaming it makes GitHub wait forever for a check that never reports,
+    # which blocks every merge -- update the protection rule first if you do.
+    name: lint scripts + tools
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
