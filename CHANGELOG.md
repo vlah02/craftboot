@@ -5,51 +5,84 @@ All notable changes to craftboot are documented here. Format loosely follows
 project's `git` tags (`git describe --tags` is the runtime source of truth,
 see [README.md#versioning](README.md#versioning)).
 
-## Unreleased — v3.0 (Milestone A: UEFI application)
+## v3.0 — 2026-07-15
 
-Milestone A only — proven in **QEMU/OVMF**. Not yet signed, not yet
-installed as a firmware entry, not yet run on real hardware; the v2.1
-initramfs path below is what's still installed and running on real
-hardware. Milestone B (pending) covers MOK-signing, real-firmware install,
-real-hardware validation, and retiring the v2.1 initramfs path + `dist/ubuntu`.
+craftboot is now a standalone **UEFI application**: it runs before
+`ExitBootServices` as its own MOK-signed firmware entry, renders on the GOP
+framebuffer, and hands off by **chainloading** the next loader in the same boot
+— zero reboot, firmware state untouched. Installed, promoted to default, and
+validated on real hardware (ASUS ROG G713PI, Ubuntu, Secure Boot ON). The
+v1/v2 Linux initramfs path is **retired**.
 
 ### Added
-- Rewrote craftboot as a standalone **UEFI application** (PE32+, `make efi`)
-  that renders the menu on the GOP framebuffer before `ExitBootServices` and
-  hands off by **chainloading** the next loader via `LoadImage`/`StartImage`
-  — **zero reboot** (proven in QEMU; the seamless, audio-safe alternative to
-  v2.1's kexec/`BootNext` handoff).
-- Platform-agnostic core kept behind `display.h`/`input.h`/`plat.h`; new EFI
-  backend (`src/efi/`): GOP display, Simple Text Input, Simple File System
-  reads, TSC-based timing, `EFI_RNG_PROTOCOL`, chainload +
-  BootNext/`OsIndications` handoff, and a freestanding `mini_libc`
-  (allocator, mem/str ops, mini `snprintf`, range-reduced trig).
+- Standalone UEFI application (`make efi` -> PE32+ via mingw): GOP display,
+  Simple Text Input, Simple File System asset loading, TSC timing,
+  `EFI_RNG_PROTOCOL`, and a freestanding `mini_libc` (allocator, mem/str ops,
+  mini `snprintf`, range-reduced trig).
+- Zero-reboot handoff by **device-path** `LoadImage`/`StartImage`. The device-path
+  form is required: shim resolves its own next stage relative to where it was
+  loaded from, and an image loaded from a memory buffer has none.
+- `dist/ubuntu/efi-install.sh` — MOK genkey/enroll, sbsign, shim install,
+  recovery UKI, MOK-signed Memtest86+, firmware entry, kernel hook, plus
+  `--promote` / `--uninstall` / `--print`.
+- `src/efi/sbat.c`: a `.sbat` section placed by the **linker** (inside
+  `SizeOfImage`), which shim 15.8 requires of any second stage.
+- Multi-core panorama render via **MP Services** `StartupAllAPs` with
+  work-stealing row slices, each AP enabling SIMD on its own core.
+- Real Minecraft cubemaps: `tools/fetch_panoramas.py` pulls each version's 6
+  faces from Mojang's manifest/asset index and reprojects them to 4096x2048
+  equirects.
+- `fb_blur()` — uniform screen-space box blur, applied only to the low-res
+  1.12 classic theme, with unit tests.
+- Panorama downward **pitch** parameter on `pano_create()`, with a test that
+  asserts the sampled latitude directly.
 - Config schema v3: entry types `chainload`/`bootnext`/`uefi`/`submenu`/
   `info`/`back` (dropped `kexec`/`windows`); buffer-based asset decoding
   (`*_mem`) so assets can load from an ESP via Simple File System.
 - `core/efivar.c` pure firmware-format helpers (load-option description
   decode, `OsIndications` read-modify-write, `Boot####` name parse) with
   host-side unit tests; mini `snprintf` host-tested.
-- `tools/run-qemu-efi.sh` QEMU/OVMF harness + CI `efi-build` job
-  (warning-free PE32+ build).
+- `tools/run-qemu-efi.sh` QEMU/OVMF harness (headless boot, HMP screendump,
+  sendkey).
+- CI `efi-build` job asserting a warning-free PE32+ image **with** a `.sbat`
+  section and **no** trailing COFF symbol overlay; `boot_entries.json` JSON
+  validation; `craftboot.efi` uploaded as an artifact.
+- `.github/workflows/release.yml` publishes `craftboot.efi` on a `v*` tag.
 
 ### Changed
-- Renderer runs scalar + single-threaded + no-AVX2 in the EFI build
-  (firmware execution has no AVX/SSE state to rely on and no pthreads); the
-  host build (`make`, `make dev`) keeps AVX2 + threading unchanged.
-- `src/core/version.h` fallback bumped to `"v3.0"`; the EFI build's
-  `CRAFTBOOT_VERSION_GIT` now reuses the same `$(VERSION)` (`git describe`)
-  value as the host build instead of a separate hardcoded string, so both
-  footers agree once the `v3.0` tag lands.
+- Present via GOP `Blt(BufferToVideo)` instead of writing the framebuffer
+  directly. The GOP framebuffer is mapped **uncached** on the real GPU
+  (~22 MB/s), which made a full-screen present take 372 ms; `Blt` drops it to
+  ~6 ms.
+- Enable SIMD at entry (`CR4.OSFXSR|OSXMMEXCPT|OSXSAVE`, `XCR0 = x87|SSE|AVX`)
+  and build the EFI app `-O2 -mavx2`. Firmware leaves `CR4.OSXSAVE` clear, so
+  AVX2 would otherwise `#UD`.
+- Panorama camera: field of view 85 -> 140 degrees with a 30-degree downward
+  pitch.
+- `src/core/version.h` fallback bumped to `"v3.0"`; the EFI build reuses the
+  host `$(VERSION)` (`git describe`) so both footers agree.
+- `make` now builds the UEFI application; there is no host binary.
 
-### Not yet done (Milestone B)
-- Signing `craftboot.efi` with the MOK key, installing it as the `Craftboot`
-  firmware entry's loader, and validating on real hardware.
-- Retiring the v2.1 Linux initramfs path (`display_drm.c`/`input_evdev.c`/
-  `src/init/`/`src/boot/actions.c`) and the `dist/ubuntu` tooling — both
-  stay in place and keep building until Milestone B lands.
+### Removed
+- The v2 Linux backend: `src/init/` (PID-1 entry, mounts, module loading,
+  UUID probe), `src/boot/actions.c` (kexec/BootNext syscalls),
+  `display_drm.c`/`input_evdev.c`, and the SDL dev backend.
+- The initramfs/UKI tooling it served: `dist/ubuntu/build.sh`, `rebuild.sh`,
+  `uki-setup.sh`, `uki-build.sh`, `tools/run-qemu.sh`, `tools/make_demo.py`,
+  and the completed one-time `tools/reencode_panoramas.py`.
+- `m_fabsf()`, a duplicate of the `fabsf()` the renderer actually calls.
 
-## Unreleased — v2.1 post-tag hardening
+### Fixed
+- The original motivation: `kexec` into Ubuntu skipped the firmware's ACPI init
+  for the ALC294 speaker amp, leaving it silently dead until a cold boot.
+  Chainloading before `ExitBootServices` avoids both `kexec` and the
+  `BootNext` re-POST that worked around it.
+- shim refusing the MOK-signed image — "Security Violation" (no `.sbat`
+  section) and "gaps between PE/COFF sections" (mingw's trailing symbol table,
+  now stripped with `objcopy --strip-all`).
+- `cp -a` onto the FAT ESP failed on ownership and aborted the installer under
+  `set -e`; uses `cp -r` now.
+## v2.1 post-tag hardening (shipped in v3.0)
 
 Landed after the `v2.1` tag; kept here until the next tag cuts a release.
 
