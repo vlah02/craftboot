@@ -213,10 +213,16 @@ cmd_boot() {
     cp -f "$OVMF_VARS_SRC" "$vars_copy"
 
     # ---- KVM detection ----
+    # The TCG fallback MUST pass -cpu max. craftboot.efi is built -mavx2 with no
+    # runtime scalar fallback, and QEMU's default TCG model (qemu64) does not
+    # advertise AVX2 -- the app faults on its first vector instruction and the
+    # boot dies right after BdsDxe hands it control, with no console to say why.
+    # -cpu max enables everything the accelerator can emulate, AVX2 included.
     local kvm_args=()
     if [[ "$FORCE_NO_KVM" -eq 0 && -e /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
         kvm_args=(-enable-kvm -cpu host)
     else
+        kvm_args=(-cpu max)
         echo "warning: /dev/kvm unavailable (or --no-kvm) -- falling back to TCG software emulation (slower; TSC/timing may jitter)" >&2
     fi
 
