@@ -24,6 +24,15 @@ $(B)/%.o: tests/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -Itests -c $< -o $@
 TESTS := $(patsubst tests/%.c,$(B)/%,$(wildcard tests/test_*.c))
 $(B)/test_%: tests/test_%.c $(CORE)
 	@mkdir -p $(B); $(CC) $(CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
+
+# tests/test_scene.c #includes core/menu.c to reach its static scene_load /
+# draw_scene / picker functions, so it must link WITHOUT menu.o -- otherwise
+# every symbol in menu.c is defined twice. This explicit rule takes precedence
+# over the pattern rule above.
+# src/core/menu.c is a prerequisite because test_scene.c #includes it -- without
+# it make would not rebuild the test when menu.c changes, silently running stale.
+$(B)/test_scene: tests/test_scene.c src/core/menu.c $(filter-out $(B)/menu.o,$(CORE))
+	@mkdir -p $(B); $(CC) $(CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
 test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done; echo "ALL TESTS PASS"
 .PHONY: test
@@ -72,6 +81,10 @@ $(B)/asan_%.o: tests/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -Itests -c $< -o
 
 ASAN_TESTS := $(patsubst tests/%.c,$(B)/asan_%,$(wildcard tests/test_*.c))
 $(B)/asan_test_%: tests/test_%.c $(ASAN_CORE)
+	@mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
+
+# same duplicate-symbol exclusion as the non-sanitized test_scene rule above
+$(B)/asan_test_scene: tests/test_scene.c src/core/menu.c $(filter-out $(B)/asan_menu.o,$(ASAN_CORE))
 	@mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
 
 # detect_leaks=0: the test harness loads font/image atlases (see
