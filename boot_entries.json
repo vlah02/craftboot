@@ -1,20 +1,16 @@
 {
-  "_comment": "Boot entries for craftboot. type: windows|bootnext (match = firmware entry description) | kexec (kernel/initrd/cmdline, used for recovery) | submenu|info|uefi|back. Dry-run unless running as PID 1.",
-  "root_uuid": "c36a4c56-487b-4aee-946b-f7fa2dc7f001",
-  "windows_efi_uuid": "34C5-41C8",
+  "_comment": "craftboot v3 entries. type: chainload(path=ESP loader) | bootnext(match=firmware desc) | uefi | submenu(target) | info | back.",
   "menus": {
     "main": [
-      { "id": "windows", "label": "Windows", "type": "windows" },
-      { "id": "ubuntu",  "label": "Ubuntu",  "type": "bootnext", "match": "Ubuntu" },
+      { "id": "windows", "label": "Windows", "type": "bootnext", "match": "Windows Boot Manager" },
+      { "id": "ubuntu",  "label": "Ubuntu",  "type": "chainload", "path": "\\EFI\\ubuntudirect\\shimx64.efi" },
       { "id": "extras",  "label": "Extras",  "type": "submenu", "target": "extras" }
     ],
     "extras": [
-      { "id": "ubuntu-recovery", "label": "Ubuntu (recovery mode)", "type": "kexec",
-        "kernel": "/boot/vmlinuz", "initrd": "/boot/initrd.img",
-        "cmdline": "root=UUID=c36a4c56-487b-4aee-946b-f7fa2dc7f001 ro recovery nomodeset dis_ucode_ldr" },
-      { "id": "memtest", "label": "Memory test", "type": "info" },
-      { "id": "uefi",    "label": "UEFI Firmware Settings", "type": "uefi" },
-      { "id": "back",    "label": "Back", "type": "back" }
+      { "id": "recovery", "label": "Ubuntu (recovery)", "type": "chainload", "path": "\\EFI\\ubunturecovery\\shimx64.efi" },
+      { "id": "memtest",  "label": "Memtest86+",        "type": "chainload", "path": "\\EFI\\memtest\\mtx64.efi" },
+      { "id": "uefi",     "label": "UEFI Firmware Settings", "type": "uefi" },
+      { "id": "back",     "label": "Back", "type": "back" }
     ]
   }
 }

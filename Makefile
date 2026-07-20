@@ -1,60 +1,56 @@
 CC      ?= gcc
-MUSL    ?= 0
-ifeq ($(MUSL),1)
-CC      := musl-gcc
-EXTRA   := -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu
-endif
 CFLAGS  ?= -O3 -march=x86-64-v3 -std=c11 -Wall -Wextra
-CFLAGS  += -Isrc -Isrc/vendor -I/usr/include/libdrm $(EXTRA) -D_GNU_SOURCE
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo v2.1)
+CFLAGS  += -Isrc -Isrc/vendor -D_GNU_SOURCE
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo v3.0)
 CFLAGS  += -DCRAFTBOOT_VERSION_GIT=\"$(VERSION)\"
 LDLIBS  := -lpthread -lm
 B       := build
 
-CORE    := $(B)/render.o $(B)/assets.o $(B)/menu.o
-SHIP    := $(B)/display_drm.o $(B)/input_evdev.o $(B)/actions.o $(B)/initlib.o $(B)/main.o
-DEVOBJ  := $(B)/dev_render.o $(B)/dev_assets.o $(B)/dev_menu.o \
-           $(B)/dev_display_sdl.o $(B)/dev_input_sdl.o $(B)/dev_actions.o \
-           $(B)/dev_initlib.o $(B)/dev_main.o
+# The shipped artifact is the freestanding UEFI app (`make efi`, below); there
+# is no host binary. CORE is the platform-agnostic core compiled for the HOST
+# purely so the test/bench/fuzz harnesses can exercise it with tooling that
+# can't run inside firmware (sanitizers, gdb). tests/stub_platform.c satisfies
+# the display/input hooks menu.c references but the tests never call.
+CORE    := $(B)/render.o $(B)/assets.o $(B)/menu.o $(B)/efivar.o \
+           $(B)/plat_host.o $(B)/stub_platform.o
 
-all: $(B)/craftboot
-dev: $(B)/craftboot-dev
+all: efi
+.PHONY: all
 
 $(B)/%.o: src/core/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -c $< -o $@
 $(B)/%.o: src/platform/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -c $< -o $@
-$(B)/%.o: src/boot/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -c $< -o $@
-$(B)/%.o: src/init/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -c $< -o $@
-
-$(B)/craftboot: $(CORE) $(SHIP)
-	$(CC) $(CFLAGS) -static -o $@ $^ $(LDLIBS)
-
-$(B)/dev_%.o: src/core/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -DDEV -c $< -o $@
-$(B)/dev_%.o: src/platform/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -DDEV $(shell sdl2-config --cflags) -c $< -o $@
-$(B)/dev_%.o: src/boot/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -DDEV -c $< -o $@
-$(B)/dev_%.o: src/init/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -DDEV -c $< -o $@
-
-$(B)/craftboot-dev: $(DEVOBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(shell sdl2-config --libs) $(LDLIBS)
+$(B)/%.o: tests/%.c ; @mkdir -p $(B); $(CC) $(CFLAGS) -Itests -c $< -o $@
 
 TESTS := $(patsubst tests/%.c,$(B)/%,$(wildcard tests/test_*.c))
-# initlib.o (uuid_parse16 / ext4_uuid_matches) is linked into every test so
-# the generic pattern rule covers test_uuid.c too, without a special case.
-$(B)/test_%: tests/test_%.c $(CORE) $(B)/actions.o $(B)/display_drm.o $(B)/input_evdev.o $(B)/initlib.o
+$(B)/test_%: tests/test_%.c $(CORE)
+	@mkdir -p $(B); $(CC) $(CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
+
+# tests/test_scene.c #includes core/menu.c to reach its static scene_load /
+# draw_scene / picker functions, so it must link WITHOUT menu.o -- otherwise
+# every symbol in menu.c is defined twice. This explicit rule takes precedence
+# over the pattern rule above.
+# src/core/menu.c is a prerequisite because test_scene.c #includes it -- without
+# it make would not rebuild the test when menu.c changes, silently running stale.
+$(B)/test_scene: tests/test_scene.c src/core/menu.c $(filter-out $(B)/menu.o,$(CORE))
 	@mkdir -p $(B); $(CC) $(CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
 test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done; echo "ALL TESTS PASS"
+.PHONY: test
 
 bench: $(B)/bench_pano
-$(B)/bench_pano: tests/bench_pano.c $(CORE) $(B)/display_drm.o $(B)/input_evdev.o
+$(B)/bench_pano: tests/bench_pano.c $(CORE)
 	@mkdir -p $(B); $(CC) $(CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
 	./$@
 .PHONY: bench
 
-diff-pano: $(CORE) $(B)/display_drm.o $(B)/input_evdev.o
+# Proves the AVX2 panorama fast path is bit-exact against the scalar reference:
+# any divergence between the two is a rendering bug, not a rounding detail.
+diff-pano: $(CORE)
 	@mkdir -p $(B)
 	$(CC) $(CFLAGS) -DPANO_NO_AVX2 -c src/core/render.c -o $(B)/render_scalar.o
-	$(CC) $(CFLAGS) -Itests -o $(B)/diff_scalar tests/diff_pano.c $(B)/render_scalar.o $(B)/assets.o $(B)/menu.o $(B)/display_drm.o $(B)/input_evdev.o $(LDLIBS)
-	$(CC) $(CFLAGS) -Itests -o $(B)/diff_avx2 tests/diff_pano.c $(CORE) $(B)/display_drm.o $(B)/input_evdev.o $(LDLIBS)
+	$(CC) $(CFLAGS) -Itests -o $(B)/diff_scalar tests/diff_pano.c $(B)/render_scalar.o \
+	    $(filter-out $(B)/render.o,$(CORE)) $(LDLIBS)
+	$(CC) $(CFLAGS) -Itests -o $(B)/diff_avx2 tests/diff_pano.c $(CORE) $(LDLIBS)
 	./$(B)/diff_scalar > $(B)/frames_scalar.bin
 	./$(B)/diff_avx2   > $(B)/frames_avx2.bin
 	cmp $(B)/frames_scalar.bin $(B)/frames_avx2.bin && echo "DIFF-PANO: byte-identical"
@@ -76,15 +72,19 @@ diff-pano: $(CORE) $(B)/display_drm.o $(B)/input_evdev.o
 # a missing env var), so the sanitizer gate is actually blocking. (ASan
 # already aborts nonzero on its own errors; this only fixes UBSan.)
 ASAN_CFLAGS := $(CFLAGS) -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined
-ASAN_CORE   := $(B)/asan_render.o $(B)/asan_assets.o $(B)/asan_menu.o
+ASAN_CORE   := $(B)/asan_render.o $(B)/asan_assets.o $(B)/asan_menu.o \
+               $(B)/asan_efivar.o $(B)/asan_plat_host.o $(B)/asan_stub_platform.o
 
 $(B)/asan_%.o: src/core/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
 $(B)/asan_%.o: src/platform/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
-$(B)/asan_%.o: src/boot/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
-$(B)/asan_%.o: src/init/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -c $< -o $@
+$(B)/asan_%.o: tests/%.c ; @mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -Itests -c $< -o $@
 
 ASAN_TESTS := $(patsubst tests/%.c,$(B)/asan_%,$(wildcard tests/test_*.c))
-$(B)/asan_test_%: tests/test_%.c $(ASAN_CORE) $(B)/asan_actions.o $(B)/asan_display_drm.o $(B)/asan_input_evdev.o $(B)/asan_initlib.o
+$(B)/asan_test_%: tests/test_%.c $(ASAN_CORE)
+	@mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
+
+# same duplicate-symbol exclusion as the non-sanitized test_scene rule above
+$(B)/asan_test_scene: tests/test_scene.c src/core/menu.c $(filter-out $(B)/asan_menu.o,$(ASAN_CORE))
 	@mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
 
 # detect_leaks=0: the test harness loads font/image atlases (see
@@ -97,10 +97,45 @@ test-asan: $(ASAN_TESTS)
 .PHONY: test-asan
 
 fuzz: $(B)/fuzz_parse
-$(B)/fuzz_parse: tests/fuzz_parse.c $(B)/asan_assets.o $(B)/asan_actions.o $(B)/asan_initlib.o
+$(B)/fuzz_parse: tests/fuzz_parse.c $(ASAN_CORE)
 	@mkdir -p $(B); $(CC) $(ASAN_CFLAGS) -Itests -o $@ $< $(filter %.o,$^) $(LDLIBS)
 	ASAN_OPTIONS=detect_leaks=0 ./$@
 .PHONY: fuzz
 
+# ---- EFI application (the shipped artifact) ------------------------------
+# Freestanding UEFI app: no libc, no libm -- only efi.h + mini_libc + compiler
+# builtins. Cross-compiled PE32+ via mingw's ms_abi support.
+MINGW := x86_64-w64-mingw32-gcc
+# Version consistency: reuse the same $(VERSION) (git describe --tags) as the
+# host CFLAGS above, so the EFI menu footer and the host build always agree.
+EFI_CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check -fshort-wchar \
+              -mno-red-zone -mno-stack-arg-probe -O2 -mavx2 -Wall -Wextra -Isrc -Isrc/vendor \
+              -DPANO_MP_SERVICES -DEFI -DCRAFTBOOT_VERSION_GIT=\"$(VERSION)\" \
+              -D__USE_MINGW_ANSI_STDIO=0 -DNDEBUG \
+              -DSTBI_NO_STDIO -DSTBI_NO_LINEAR $(EFI_EXTRA)
+EFI_LDFLAGS := -nostdlib -Wl,-dll -shared -Wl,--subsystem,10 -e efi_main
+EFI_SRC := src/efi/main.c src/efi/mini_libc.c src/efi/display_efi.c src/efi/input_efi.c \
+           src/efi/fs.c src/efi/sys.c src/efi/actions_efi.c src/efi/plat_efi.c src/efi/sbat.c \
+           src/core/efivar.c src/core/render.c src/core/menu.c src/core/assets.c
+# Two things are required for Ubuntu's shim (ships 15.8) to load the MOK-signed
+# image:
+#   1. .sbat section: shim 15.8 REJECTS any second stage without a valid .sbat
+#      section (Security Violation), regardless of signature. src/efi/sbat.c
+#      defines it so the LINKER places it at a real RVA inside SizeOfImage
+#      (objcopy --add-section lands it OUTSIDE the mapped image -> shim can't
+#      see it). ukify-built UKIs carry one; a hand-linked mingw PE otherwise not.
+#   2. --strip-all: drop mingw's trailing COFF symbol/string-table overlay (past
+#      the last PE section) that otherwise trips shim's Authenticode hashing.
+MINGW_OBJCOPY := x86_64-w64-mingw32-objcopy
+efi: ; @mkdir -p build; $(MINGW) $(EFI_CFLAGS) $(EFI_SRC) -o build/craftboot.efi $(EFI_LDFLAGS); \
+	$(MINGW_OBJCOPY) --strip-all build/craftboot.efi
+.PHONY: efi
+
+# Trivial chainload TARGET .efi (distinct solid-color fill + serial marker, see
+# tests/efi/chainload_target.c) used to prove the zero-reboot LoadImage/StartImage
+# handoff in QEMU. Test fixture, not part of craftboot.efi.
+chainload-target: ; @mkdir -p build; $(MINGW) $(EFI_CFLAGS) tests/efi/chainload_target.c -o build/chainload_target.efi $(EFI_LDFLAGS)
+.PHONY: chainload-target
+
 clean: ; -rm -rf $(B)
-.PHONY: all dev test clean bench
+.PHONY: clean

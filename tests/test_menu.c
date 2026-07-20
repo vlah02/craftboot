@@ -28,17 +28,17 @@ static int submenu_and_back(void) {
 }
 static int select_returns_bootable(void) {
     menustate_t m; ms_init(&m, &cfg);
-    m.index = 1;                                  /* Ubuntu (BootNext since M4) */
+    m.index = 1;                                  /* Ubuntu (chainload since v3) */
     const entry_t *e = ms_select(&m);
-    OK(e && e->type == E_BOOTNEXT);
-    OK(strcmp(e->match, "Ubuntu") == 0);
+    OK(e && e->type == E_CHAINLOAD);
+    OK(strcmp(e->path, "\\EFI\\ubuntudirect\\shimx64.efi") == 0);
     return 0;
 }
-static int bootnext_is_default_bootable(void) {
+static int chainload_is_default_bootable(void) {
     menustate_t m; ms_init(&m, &cfg);
     m.index = 1;                                  /* highlight Ubuntu */
     const entry_t *d = ms_default_entry(&m);
-    OK(d && d->type == E_BOOTNEXT);               /* countdown boots the highlight */
+    OK(d && d->type == E_CHAINLOAD);              /* countdown boots the highlight */
     return 0;
 }
 static int countdown_and_default(void) {
@@ -47,8 +47,7 @@ static int countdown_and_default(void) {
     ms_tick(&m, 6.0); OK(m.countdown > 8.9);
     ms_cancel_autoboot(&m); OK(m.countdown < 0);
     const entry_t *d = ms_default_entry(&m);
-    OK(d && (d->type == E_WINDOWS || d->type == E_KEXEC));
-    OK(d->type == E_WINDOWS);                     /* index 0 is bootable */
+    OK(d && d->type == E_BOOTNEXT);               /* index 0 (Windows) is bootable */
     return 0;
 }
 static int move_large_delta_safe(void) {
@@ -79,7 +78,7 @@ static int default_entry_skips_nonbootable(void) {
     menustate_t m; ms_init(&m, &cfg);
     m.index = 2;                                  /* Extras (E_SUBMENU) */
     const entry_t *d = ms_default_entry(&m);
-    OK(d && d->type == E_WINDOWS);                /* first bootable = index 0 */
+    OK(d && d->type == E_BOOTNEXT);                /* first bootable = index 0 */
     OK(d == &cfg.menu[0][0]);
     return 0;
 }
@@ -110,7 +109,7 @@ static int empty_menu_safe(void) {
     return 0;
 }
 int main(void) { setup(); RUN(nav_wraps); RUN(submenu_and_back);
-                 RUN(select_returns_bootable); RUN(bootnext_is_default_bootable);
+                 RUN(select_returns_bootable); RUN(chainload_is_default_bootable);
                  RUN(countdown_and_default);
                  RUN(move_large_delta_safe); RUN(countdown_expiry_clamps_to_zero);
                  RUN(default_entry_skips_nonbootable); RUN(default_entry_none_bootable);

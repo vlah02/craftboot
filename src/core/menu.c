@@ -36,7 +36,7 @@ void ms_tick(menustate_t *m, double dt) {
 }
 void ms_cancel_autoboot(menustate_t *m) { m->countdown = -1; }
 static int bootable(const entry_t *e) {
-    return e->type == E_WINDOWS || e->type == E_KEXEC || e->type == E_BOOTNEXT;
+    return e->type == E_CHAINLOAD || e->type == E_BOOTNEXT;
 }
 const entry_t *ms_default_entry(const menustate_t *m) {
     int n; const entry_t *es = m->cfg->menu[0]; n = m->cfg->nmenu[0];
@@ -47,12 +47,10 @@ const entry_t *ms_default_entry(const menustate_t *m) {
 
 #include "platform/display.h"
 #include "platform/input.h"
-#include <dirent.h>
+#include "platform/plat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <sys/random.h>
-#include <time.h>
 
 #define C_WHITE  0xFFFFFF
 #define C_SHADOW 0x3F3F3F
@@ -60,35 +58,38 @@ const entry_t *ms_default_entry(const menustate_t *m) {
 #define C_SPLASH 0xFFFF00
 
 static double now_s(void) {
-    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
-    return t.tv_sec + t.tv_nsec / 1e9;
+    return plat_now();
 }
-static unsigned rnd(unsigned n) {          /* uniform-ish 0..n-1 via getrandom */
+static unsigned rnd(unsigned n) {          /* uniform-ish 0..n-1 via plat_rand */
     if (n == 0) return 0;
-    unsigned r; if (getrandom(&r, sizeof r, 0) < 0) r = 0; return r % n;
+    return (unsigned)(plat_rand() % n);
 }
 static int __attribute__((noipa)) pick_random_file(const char *dir, const char *ext, char *out, size_t cap) {
-    char names[64][256]; int n = 0;
-    DIR *d = opendir(dir); if (!d) return -1;
-    struct dirent *e;
-    while ((e = readdir(d)) && n < 64) {
-        const char *dot = strrchr(e->d_name, '.');
-        if (dot && !strcmp(dot, ext)) snprintf(names[n++], 256, "%s", e->d_name);
-    }
-    closedir(d);
-    if (!n) return -1;
+    char names[64][256];
+    int n = plat_list_dir(dir, ext, names, 64);
+    if (n <= 0) return -1;
     snprintf(out, cap, "%s/%s", dir, names[rnd(n)]);
     return 0;
 }
 static int __attribute__((noipa)) pick_splash(const char *assets, char *out, size_t cap) {
     char path[256]; snprintf(path, sizeof path, "%s/splashes.txt", assets);
-    FILE *f = fopen(path, "r"); if (!f) { snprintf(out, cap, "craftboot!"); return 0; }
+    long sz = 0; char *buf = plat_slurp(path, &sz);
+    if (!buf) { snprintf(out, cap, "craftboot!"); return 0; }
     char lines[128][120]; int n = 0;
-    while (n < 128 && fgets(lines[n], 120, f)) {
-        lines[n][strcspn(lines[n], "\r\n")] = 0;
-        if (lines[n][0]) n++;
+    char *p = buf, *end = buf + sz;
+    while (p < end && n < 128) {
+        char *nl = p; while (nl < end && *nl != '\n' && *nl != '\r') nl++;   /* end of physical line */
+        char *seg = p;
+        while (seg < nl && n < 128) {                 /* fgets-style <=119 chunking */
+            int len = (int)(nl - seg); if (len > 119) len = 119;
+            memcpy(lines[n], seg, len); lines[n][len] = 0; n++;
+            seg += len;
+        }
+        /* empty line (seg==nl): inner loop doesn't run -> no entry, matching old if(lines[n][0]) */
+        while (nl < end && (*nl == '\n' || *nl == '\r')) nl++;
+        p = nl;
     }
-    fclose(f);
+    free(buf);
     snprintf(out, cap, "%s", n ? lines[rnd(n)] : "craftboot!");
     return 0;
 }
@@ -99,14 +100,14 @@ static void __attribute__((noipa)) pick_logo(const char *assets, const char *pan
     char *dot = strrchr(stem, '.'); if (dot) *dot = 0;
     snprintf(out, cap, "%s/logos/minecraft_classic.png", assets);
     char mpath[256]; snprintf(mpath, sizeof mpath, "%s/logo_map.json", assets);
-    FILE *f = fopen(mpath, "r"); if (!f) return;
-    char js[4096]; size_t n = fread(js, 1, sizeof js - 1, f); js[n] = 0; fclose(f);
+    long jn = 0; char *js = plat_slurp(mpath, &jn); if (!js) return;
     char key[260]; snprintf(key, sizeof key, "\"%s\"", stem);
-    char *k = strstr(js, key); if (!k) return;
-    char *q1 = strchr(k + strlen(key), '"'); if (!q1) return;
-    char *q2 = strchr(q1 + 1, '"'); if (!q2) return;
+    char *k = strstr(js, key); if (!k) { free(js); return; }
+    char *q1 = strchr(k + strlen(key), '"'); if (!q1) { free(js); return; }
+    char *q2 = strchr(q1 + 1, '"'); if (!q2) { free(js); return; }
     *q2 = 0;
     snprintf(out, cap, "%s/logos/%s", assets, q1 + 1);
+    free(js);
 }
 
 typedef struct {                     /* everything loaded once per boot */
@@ -114,6 +115,8 @@ typedef struct {                     /* everything loaded once per boot */
     img_t logo, btn, btn_hi, dirt, splash_rot;
     pano_t *pano;
     int have_pano;
+    int pano_blur;                   /* screen-space blur radius for the pano (0 = none) */
+    uint32_t *blur_tmp;              /* persistent scratch for fb_blur (alloc'd in scene_load) */
     char splash_txt[120];
     double fps;                      /* measured by menu_run; 0 until known */
 } scene_t;
@@ -144,9 +147,17 @@ static int scene_load(scene_t *s, const config_t *cfg, const char *assets, int w
     if (pick_random_file(pdir, ".jpg", pano_path, sizeof pano_path) == 0) {
         img_t eq = img_load(pano_path);
         if (eq.rgba) {
-            fprintf(stderr, "[craftboot] panorama world: %s\n", pano_path);
-            s->pano = pano_create(&eq, w, h, 140.f);
+            char msg[300]; snprintf(msg, sizeof msg, "[craftboot] panorama world: %s", pano_path); plat_log(msg);
+            s->pano = pano_create(&eq, w, h, 140.f, 30.f);
             s->have_pano = 1;
+            /* 1.12 classic is a low-res (256^2-face) source; at a wide FOV it goes
+             * sharp-centre / smeared-sides. A uniform screen-space blur makes it
+             * read as an intentional soft look. Other themes are crisp -> no blur. */
+            if (strstr(pano_path, "1.12_classic")) {
+                s->pano_blur = (int)(w * 0.006);              /* ~11px radius @1080p */
+                s->blur_tmp = malloc((size_t)w * h * 4);      /* persistent: pre-arena-mark */
+                if (!s->blur_tmp) s->pano_blur = 0;
+            }
             img_free(&eq);
         }
         pick_logo(assets, pano_path, logo_path, sizeof logo_path);
@@ -169,6 +180,7 @@ static int scene_load(scene_t *s, const config_t *cfg, const char *assets, int w
 static void draw_scene(fb_t *fb, scene_t *s, menustate_t *m, double t, double yaw_turns) {
     if (s->have_pano) pano_render(s->pano, fb, yaw_turns);
     else fb_fill(fb, 0x181A20);
+    if (s->pano_blur) fb_blur(fb, s->pano_blur, s->blur_tmp);   /* soften low-res panoramas uniformly */
     int w = fb->w, h = fb->h;
     int logo_y = (int)(h * 0.24) - s->logo.h / 2;
     if (s->logo.rgba) blit(fb, &s->logo, (w - s->logo.w) / 2, logo_y);
@@ -192,7 +204,7 @@ static void draw_scene(fb_t *fb, scene_t *s, menustate_t *m, double t, double ya
                          cx - tw / 2, by + (bh - s->button.g[0].h) / 2, col, C_SHADOW);
     }
     /* footer */
-    char ver[64];                    /* room for "Craftboot v2.1-12-gabc1234-dirty  144 fps" */
+    char ver[128];
     if (s->fps > 0) snprintf(ver, sizeof ver, "Craftboot " CRAFTBOOT_VERSION "  %.0f fps", s->fps);
     else            snprintf(ver, sizeof ver, "Craftboot " CRAFTBOOT_VERSION);
     draw_text_shadow(fb, &s->small, ver, 8, 6, C_WHITE, C_SHADOW);
@@ -235,7 +247,7 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
     fb_t *fb = display_fb(d);
     scene_t s;
     if (scene_load(&s, cfg, assets_dir, fb->w, fb->h)) {
-        fprintf(stderr, "[craftboot] scene load failed\n");
+        plat_log("[craftboot] scene load failed");
         return NULL;
     }
     menustate_t m; ms_init(&m, cfg);
@@ -244,6 +256,11 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
     int warmed = 0;                              /* skip the first frame's startup-gap dt */
     const entry_t *chosen = NULL;
     while (!chosen) {
+        /* Reclaim last frame's transient scratch (scaled buttons/splash). The
+         * first call marks the arena just past scene_load's persistent assets;
+         * nothing allocated inside this loop must survive across frames (fps is
+         * scalar; submenu nav reuses the already-loaded scene). No-op on host. */
+        plat_scratch_reset();
         double t = now_s(), dt = t - tprev; tprev = t;
         action_t a;
         while ((a = input_poll(in)) != ACT_NONE) {
@@ -273,7 +290,8 @@ const entry_t *menu_run(display_t *d, input_t *in, const config_t *cfg,
         }
         frames++;
         if (t - tstat >= 5.0) {                     /* throttled kmsg log only */
-            fprintf(stderr, "[craftboot] fps: %.1f\n", frames / (t - tstat));
+            char msg[64]; snprintf(msg, sizeof msg, "[craftboot] fps: %.1f", frames / (t - tstat));
+            plat_log(msg);
             frames = 0; tstat = t;
         }
     }
@@ -294,8 +312,7 @@ void menu_show_error(display_t *d, const char *msg, int seconds) {
     fb_fill(fb, 0x400000);
     /* error text uses no font (fonts may be what failed): draw as title via fill pattern
        is useless — log instead; keep screen red as the visual signal */
-    fprintf(stderr, "[craftboot] ERROR: %s\n", msg);
+    char logmsg[300]; snprintf(logmsg, sizeof logmsg, "[craftboot] ERROR: %s", msg); plat_log(logmsg);
     display_flip(d);
-    struct timespec ts = { seconds, 0 };
-    nanosleep(&ts, NULL);
+    plat_sleep((double)seconds);
 }

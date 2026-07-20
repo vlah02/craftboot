@@ -75,7 +75,7 @@ static int loads_repo_png(void) {
     OK(l.rgba && l.w == 200 && l.h == 20);
     img_free(&l);
     img_t j = img_load("assets/panoramas/1.16_nether.jpg");
-    OK(j.rgba && j.w == 2800 && j.h == 1400);
+    OK(j.rgba && j.w == 4096 && j.h == 2048);   /* cubemap-derived equirect (was 2800x1400) */
     img_free(&j);
     return 0;
 }

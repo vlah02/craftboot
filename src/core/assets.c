@@ -1,29 +1,28 @@
 #include "core/assets.h"
+#include "platform/plat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #define JSMN_STATIC
 #include "jsmn.h"
 
-static char *slurp(const char *path, long *n) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
-    long sz = ftell(f);
-    if (sz < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
-    *n = sz;
-    char *b = malloc((size_t)sz + 1);
-    if (!b) { fclose(f); return NULL; }
-    if (fread(b, 1, *n, f) != (size_t)*n) { fclose(f); free(b); return NULL; }
-    b[*n] = 0; fclose(f); return b;
-}
 static int teq(const char *js, const jsmntok_t *t, const char *s) {
     return t->type == JSMN_STRING && (int)strlen(s) == t->end - t->start &&
            !strncmp(js + t->start, s, t->end - t->start);
 }
 static void tcpy(char *dst, size_t cap, const char *js, const jsmntok_t *t) {
-    size_t n = (size_t)(t->end - t->start); if (n >= cap) n = cap - 1;
-    memcpy(dst, js + t->start, n); dst[n] = 0;
+    /* jsmn hands back the raw source span without decoding JSON string
+     * escapes, so unescape here: "\\"->"\", "\""->"\"", "\/"->"/", etc.
+     * (emit the byte after a backslash literally). Needed for e->path, whose
+     * "\\EFI\\..." JSON must resolve to single-backslash EFI separators for
+     * EFI_FILE_PROTOCOL.Open. Preserves the cap-1 bound and NUL terminator. */
+    const char *s = js + t->start, *end = js + t->end;
+    size_t o = 0;
+    while (s < end && o < cap - 1) {
+        if (*s == '\\' && s + 1 < end) s++;   /* skip backslash, emit escaped byte */
+        dst[o++] = *s++;
+    }
+    dst[o] = 0;
 }
 static int skip(const jsmntok_t *t, int nt, int i) {   /* index just past token i */
     int end = t[i].end, j = i + 1;
@@ -31,8 +30,7 @@ static int skip(const jsmntok_t *t, int nt, int i) {   /* index just past token 
     return j;
 }
 static etype_t etype(const char *s) {
-    if (!strcmp(s, "windows"))  return E_WINDOWS;
-    if (!strcmp(s, "kexec"))    return E_KEXEC;
+    if (!strcmp(s, "chainload")) return E_CHAINLOAD;
     if (!strcmp(s, "bootnext")) return E_BOOTNEXT;
     if (!strcmp(s, "submenu")) return E_SUBMENU;
     if (!strcmp(s, "uefi"))    return E_UEFI;
@@ -49,20 +47,17 @@ static void parse_entry(const char *js, const jsmntok_t *t, int nt, int obj, ent
         else if (teq(js, key, "label"))   tcpy(e->label, sizeof e->label, js, val);
         else if (teq(js, key, "type"))    e->type = etype(buf);
         else if (teq(js, key, "target"))  tcpy(e->target, sizeof e->target, js, val);
-        else if (teq(js, key, "kernel"))  tcpy(e->kernel, sizeof e->kernel, js, val);
-        else if (teq(js, key, "initrd"))  tcpy(e->initrd, sizeof e->initrd, js, val);
-        else if (teq(js, key, "cmdline")) tcpy(e->cmdline, sizeof e->cmdline, js, val);
+        else if (teq(js, key, "path"))    tcpy(e->path, sizeof e->path, js, val);
         else if (teq(js, key, "match"))   tcpy(e->match, sizeof e->match, js, val);
         i = skip(t, nt, i + 1);
     }
 }
-int config_load(config_t *c, const char *path) {
+int config_load_mem(config_t *c, const char *js, long n) {
     memset(c, 0, sizeof *c);
-    long n; char *js = slurp(path, &n); if (!js) return -1;
     jsmn_parser p; jsmntok_t t[512];
     jsmn_init(&p);
     int nt = jsmn_parse(&p, js, n, t, 512);
-    if (nt < 1 || t[0].type != JSMN_OBJECT) { free(js); return -1; }
+    if (nt < 1 || t[0].type != JSMN_OBJECT) return -1;
     int i = 1;
     for (int k = 0; k < t[0].size; k++) {
         const jsmntok_t *key = &t[i];
@@ -82,8 +77,13 @@ int config_load(config_t *c, const char *path) {
         }
         i = skip(t, nt, i + 1);
     }
-    free(js);
     return c->nmenu[0] ? 0 : -1;
+}
+int config_load(config_t *c, const char *path) {
+    long n; char *js = plat_slurp(path, &n); if (!js) return -1;
+    int r = config_load_mem(c, js, n);
+    free(js);
+    return r;
 }
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -93,42 +93,47 @@ int config_load(config_t *c, const char *path) {
 #include "stb_image.h"
 #include "core/render.h"
 
-img_t img_load(const char *path) {
+img_t img_load_mem(const unsigned char *bytes, int len) {
     img_t o = {0}; int n;
-    o.rgba = stbi_load(path, &o.w, &o.h, &n, 4);
+    o.rgba = stbi_load_from_memory(bytes, len, &o.w, &o.h, &n, 4);
+    return o;
+}
+img_t img_load(const char *path) {
+    long n; char *b = plat_slurp(path, &n); if (!b) return (img_t){0};
+    img_t o = img_load_mem((unsigned char *)b, (int)n);
+    free(b);
     return o;
 }
 void img_free(img_t *s) { free(s->rgba); s->rgba = 0; }
 
-int font_load(font_t *f, const char *png_path, const char *json_path) {
+int font_load_mem(font_t *f, const unsigned char *png, int pnglen,
+                   const char *json, long jsonlen) {
     memset(f, 0, sizeof *f);
-    f->atlas = img_load(png_path);
+    f->atlas = img_load_mem(png, pnglen);
     if (!f->atlas.rgba) return -1;
-    long n; char *js = slurp(json_path, &n);
-    if (!js) { img_free(&f->atlas); return -1; }
     jsmn_parser p; jsmn_init(&p);
     static jsmntok_t t[2048];
-    int nt = jsmn_parse(&p, js, n, t, 2048);
-    if (nt < 1) { free(js); img_free(&f->atlas); return -1; }
+    int nt = jsmn_parse(&p, json, jsonlen, t, 2048);
+    if (nt < 1) { img_free(&f->atlas); return -1; }
     int i = 1;
     for (int k = 0; k < t[0].size; k++) {
-        if (teq(js, &t[i], "size")) f->size = atoi(js + t[i + 1].start);
-        else if (teq(js, &t[i], "glyphs")) {
+        if (teq(json, &t[i], "size")) f->size = atoi(json + t[i + 1].start);
+        else if (teq(json, &t[i], "glyphs")) {
             int go = i + 1, gi = go + 1;
             for (int g = 0; g < t[go].size; g++) {
-                unsigned char ch = (unsigned char)js[t[gi].start];
+                unsigned char ch = (unsigned char)json[t[gi].start];
                 if (ch == '\\' && t[gi].end - t[gi].start >= 2)   /* escaped key: \" or \\ */
-                    ch = (unsigned char)js[t[gi].start + 1];
+                    ch = (unsigned char)json[t[gi].start + 1];
                 glyph_t *gl = (ch >= 32 && ch < 127) ? &f->g[ch - 32] : NULL;
                 int obj = gi + 1, fi = obj + 1;
                 for (int q = 0; q < t[obj].size; q++) {
-                    int v = atoi(js + t[fi + 1].start);
+                    int v = atoi(json + t[fi + 1].start);
                     if (gl) {
-                        if      (teq(js, &t[fi], "x")) gl->x = (short)v;
-                        else if (teq(js, &t[fi], "y")) gl->y = (short)v;
-                        else if (teq(js, &t[fi], "w")) gl->w = (short)v;
-                        else if (teq(js, &t[fi], "h")) gl->h = (short)v;
-                        else if (teq(js, &t[fi], "adv")) gl->adv = (short)v;
+                        if      (teq(json, &t[fi], "x")) gl->x = (short)v;
+                        else if (teq(json, &t[fi], "y")) gl->y = (short)v;
+                        else if (teq(json, &t[fi], "w")) gl->w = (short)v;
+                        else if (teq(json, &t[fi], "h")) gl->h = (short)v;
+                        else if (teq(json, &t[fi], "adv")) gl->adv = (short)v;
                     }
                     fi = skip(t, nt, fi + 1);
                 }
@@ -137,7 +142,14 @@ int font_load(font_t *f, const char *png_path, const char *json_path) {
         }
         i = skip(t, nt, i + 1);
     }
-    free(js);
     if (!f->size) { img_free(&f->atlas); return -1; }
     return 0;
+}
+int font_load(font_t *f, const char *png_path, const char *json_path) {
+    long pn; char *pb = plat_slurp(png_path, &pn); if (!pb) return -1;
+    long jn; char *jb = plat_slurp(json_path, &jn);
+    if (!jb) { free(pb); return -1; }
+    int r = font_load_mem(f, (unsigned char *)pb, (int)pn, jb, jn);
+    free(pb); free(jb);
+    return r;
 }

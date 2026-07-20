@@ -5,16 +5,21 @@
 static int loads_real_config(void) {
     config_t c;
     OK(config_load(&c, "boot_entries.json") == 0);
-    OK(strlen(c.root_uuid) == 36);
     OK(c.nmenu[0] == 3);
-    OK(c.menu[0][0].type == E_WINDOWS);
+    OK(c.menu[0][0].type == E_BOOTNEXT);
     OK(strcmp(c.menu[0][0].label, "Windows") == 0);
-    OK(c.menu[0][1].type == E_BOOTNEXT);
-    OK(strcmp(c.menu[0][1].match, "Ubuntu") == 0);
+    OK(strcmp(c.menu[0][0].match, "Windows Boot Manager") == 0);
+    OK(c.menu[0][1].type == E_CHAINLOAD);
+    /* tcpy() unescapes JSON string escapes, so the JSON "\\EFI\\..." resolves
+     * to single-backslash EFI separators (what EFI_FILE_PROTOCOL.Open needs). */
+    OK(strcmp(c.menu[0][1].path, "\\EFI\\ubuntudirect\\shimx64.efi") == 0);
     OK(c.menu[0][2].type == E_SUBMENU);
     OK(c.nmenu[1] == 4);
-    OK(c.menu[1][0].type == E_KEXEC);           /* recovery keeps kexec */
-    OK(strcmp(c.menu[1][0].kernel, "/boot/vmlinuz") == 0);
+    OK(c.menu[1][0].type == E_CHAINLOAD);
+    OK(strcmp(c.menu[1][0].path, "\\EFI\\ubunturecovery\\shimx64.efi") == 0);
+    OK(c.menu[1][1].type == E_CHAINLOAD);
+    OK(strcmp(c.menu[1][1].path, "\\EFI\\memtest\\mtx64.efi") == 0);
+    OK(c.menu[1][2].type == E_UEFI);
     OK(c.menu[1][3].type == E_BACK);
     return 0;
 }
@@ -42,5 +47,24 @@ static int caps_entries_at_eight(void) {
     unlink(path);
     return 0;
 }
+static int loads_from_mem(void) {
+    char *js; long n; FILE *f = fopen("boot_entries.json","rb");
+    OK(f != NULL);
+    fseek(f,0,SEEK_END); n=ftell(f); fseek(f,0,SEEK_SET);
+    js=malloc(n+1); OK(fread(js,1,n,f)==(size_t)n); js[n]=0; fclose(f);
+    config_t c; OK(config_load_mem(&c, js, n) == 0);
+    OK(c.nmenu[0] >= 1);
+    free(js);
+    return 0;
+}
+static int parses_v3_types(void) {
+    config_t c; OK(config_load(&c, "boot_entries.json") == 0);
+    OK(c.nmenu[0] == 3);
+    OK(c.menu[0][0].type == E_BOOTNEXT); OK(strcmp(c.menu[0][0].match,"Windows Boot Manager")==0);
+    OK(c.menu[0][1].type == E_CHAINLOAD); OK(strcmp(c.menu[0][1].path,"\\EFI\\ubuntudirect\\shimx64.efi")==0);
+    OK(c.menu[0][2].type == E_SUBMENU);
+    return 0;
+}
 int main(void) { RUN(loads_real_config); RUN(missing_file_fails);
-                 RUN(caps_entries_at_eight); return 0; }
+                 RUN(caps_entries_at_eight); RUN(loads_from_mem);
+                 RUN(parses_v3_types); return 0; }

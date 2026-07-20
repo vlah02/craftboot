@@ -1,0 +1,106 @@
+/* UEFI GOP backend implementing platform/display.h. Adapted from the POC's
+ * GOP + present code (poc2/poc2.c): locate GOP, pick a mode, allocate a RAM
+ * back-buffer the platform-agnostic core draws into, and present each frame
+ * honoring the GOP scanline pitch (PixelsPerScanLine, which can exceed the
+ * visible HorizontalResolution) and pixel format (BGR matches our XRGB8888
+ * back-buffer byte-for-byte on little-endian; RGB needs a per-pixel R/B
+ * swap). Freestanding: no libc, only efi.h + mini_libc + display.h/render.h. */
+#ifdef EFI
+#include "efi/efi.h"
+#include "efi/mini_libc.h"
+#include "platform/display.h"
+
+extern EFI_BOOT_SERVICES *BS;
+extern EFI_SYSTEM_TABLE *ST;
+
+/* Best-effort: mark the GOP framebuffer write-combining via DXE Services so a
+ * full-screen present isn't crippled by an uncached (UC) firmware mapping
+ * (observed as ~2 fps on real hardware; QEMU maps it as fast RAM). Silently
+ * ignore any failure (table absent, or WC not a capability of the range). */
+static void fb_set_write_combining(uint64_t base, uint64_t size) {
+    EFI_GUID dxeg = EFI_DXE_SERVICES_TABLE_GUID;
+    EFI_DXE_SERVICES *dxe = NULL;
+    for (UINTN i = 0; i < ST->NumberOfTableEntries; i++) {
+        if (memcmp(&ST->ConfigurationTable[i].VendorGuid, &dxeg, sizeof(EFI_GUID)) == 0) {
+            dxe = (EFI_DXE_SERVICES*)ST->ConfigurationTable[i].VendorTable;
+            break;
+        }
+    }
+    if (dxe && dxe->SetMemorySpaceAttributes)
+        dxe->SetMemorySpaceAttributes(base, size, EFI_MEMORY_WC);
+}
+
+struct display {
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
+    fb_t fb;                 /* cached RAM back-buffer, XRGB8888 */
+    uint32_t pitch_px, ry;   /* framebuffer PixelsPerScanLine + VerticalResolution */
+    int bgr;                 /* pixel format: 1=BGR (matches XRGB), 0=RGB (swap R/B) */
+};
+
+display_t *display_open(int w, int h) {
+    (void)w; (void)h;
+    static display_t d;
+    EFI_GUID g = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+    if (BS->LocateProtocol(&g, NULL, (void**)&d.gop) != 0) return NULL;
+
+    /* pick the largest mode <= 1920x1080, else keep the current mode */
+    uint32_t best = d.gop->Mode->Mode;
+    uint32_t bw = 0;
+    for (uint32_t i = 0; i < d.gop->Mode->MaxMode; i++) {
+        UINTN sz;
+        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+        if (d.gop->QueryMode(d.gop, i, &sz, &info) != 0) continue;
+        if (info->HorizontalResolution <= 1920 && info->VerticalResolution <= 1080 &&
+            info->HorizontalResolution > bw) {
+            bw = info->HorizontalResolution;
+            best = i;
+        }
+    }
+    d.gop->SetMode(d.gop, best);
+
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mi = d.gop->Mode->Info;
+    d.fb.w = (int)mi->HorizontalResolution;
+    d.fb.h = (int)mi->VerticalResolution;
+    d.pitch_px = mi->PixelsPerScanLine;
+    d.ry = mi->VerticalResolution;
+    d.bgr = (mi->PixelFormat == PixelBlueGreenRedReserved8BitPerColor);
+
+    fb_set_write_combining(d.gop->Mode->FrameBufferBase, d.gop->Mode->FrameBufferSize);
+
+    d.fb.px = malloc((size_t)d.fb.w * (size_t)d.fb.h * 4);
+    return d.fb.px ? &d : NULL;
+}
+
+fb_t *display_fb(display_t *d) { return &d->fb; }
+
+void display_flip(display_t *d) {
+    /* Present via the GOP driver's Blt (hardware/optimized path). Direct linear
+     * framebuffer writes are UNCACHED on real GPUs (~22 MB/s -> ~2 fps for a
+     * full-screen 1080p present, measured on the ROG); Blt goes through the
+     * vendor GOP driver and is dramatically faster. Our XRGB8888 back-buffer
+     * matches EFI_GRAPHICS_OUTPUT_BLT_PIXEL ({B,G,R,reserved}) byte-for-byte and
+     * Blt handles the panel's pixel format, so no manual conversion. Delta=0 =>
+     * source rows are Width*4 bytes (our back-buffer is tightly packed). */
+    if (d->gop->Blt(d->gop, d->fb.px, EfiBltBufferToVideo,
+                    0, 0, 0, 0, (UINTN)d->fb.w, (UINTN)d->fb.h, 0) == 0)
+        return;
+    /* Fallback: direct framebuffer write, honoring pitch + pixel format, in
+     * case a firmware's Blt is unavailable/fails (slow, but correct). */
+    uint32_t *dst = (uint32_t*)(uintptr_t)d->gop->Mode->FrameBufferBase;
+    for (int y = 0; y < d->fb.h; y++) {
+        uint32_t *srow = d->fb.px + (size_t)y * (size_t)d->fb.w;
+        uint32_t *drow = dst + (size_t)y * (size_t)d->pitch_px;
+        if (d->bgr) {
+            memcpy(drow, srow, (size_t)d->fb.w * 4);
+        } else {
+            for (int x = 0; x < d->fb.w; x++) {
+                uint32_t p = srow[x];
+                drow[x] = (p & 0xFF00FF00) | ((p & 0xFF) << 16) | ((p >> 16) & 0xFF);
+            }
+        }
+    }
+}
+
+void display_close(display_t *d) { if (d && d->fb.px) free(d->fb.px); }
+
+#endif /* EFI */

@@ -15,7 +15,7 @@ static img_t make_src(int ew, int eh) {          /* column index encoded in R an
 static int uniform_in_uniform_out(void) {
     img_t s = { malloc(256 * 128 * 4), 256, 128 };
     for (long i = 0; i < 256 * 128; i++) memcpy(&s.rgba[i * 4], "\x30\x60\x90\xff", 4);
-    pano_t *p = pano_create(&s, 80, 45, 140.f);
+    pano_t *p = pano_create(&s, 80, 45, 140.f, 0.f);
     uint32_t buf[80 * 45]; fb_t fb = { buf, 80, 45 };
     pano_render(p, &fb, 0.37);
     for (int i = 0; i < 80 * 45; i++) OK(buf[i] == 0x306090);
@@ -24,7 +24,7 @@ static int uniform_in_uniform_out(void) {
 }
 static int yaw_wraps_full_turn(void) {
     img_t s = make_src(256, 128);
-    pano_t *p = pano_create(&s, 80, 45, 140.f);
+    pano_t *p = pano_create(&s, 80, 45, 140.f, 0.f);
     uint32_t a[80 * 45], b[80 * 45];
     fb_t fa = { a, 80, 45 }, fbb = { b, 80, 45 };
     pano_render(p, &fa, 0.23);
@@ -37,7 +37,7 @@ static int yaw_wraps_full_turn(void) {
 }
 static int center_maps_to_yaw_column(void) {
     img_t s = make_src(256, 128);
-    pano_t *p = pano_create(&s, 81, 45, 140.f);
+    pano_t *p = pano_create(&s, 81, 45, 140.f, 0.f);
     uint32_t buf[81 * 45]; fb_t fb = { buf, 81, 45 };
     pano_render(p, &fb, 0.25);            /* center ray lon=0 -> col = 0.25*EW = 64 */
     uint32_t c = buf[22 * 81 + 40];
@@ -53,12 +53,52 @@ static int uniform_square_output(void) {
      * so every row is pure AVX2 body (no scalar tail). */
     img_t s = { malloc(200 * 100 * 4), 200, 100 };
     for (long i = 0; i < 200 * 100; i++) memcpy(&s.rgba[i * 4], "\x22\x44\x88\xff", 4);
-    pano_t *p = pano_create(&s, 64, 64, 100.f);
+    pano_t *p = pano_create(&s, 64, 64, 100.f, 0.f);
     uint32_t buf[64 * 64]; fb_t fb = { buf, 64, 64 };
     pano_render(p, &fb, 0.5);
     for (int i = 0; i < 64 * 64; i++) OK(buf[i] == 0x224488);
     pano_destroy(p); free(s.rgba);
     return 0;
 }
+static img_t make_src_rows(int ew, int eh) {     /* row index encoded in R and G */
+    img_t s = { malloc((size_t)ew * eh * 4), ew, eh };
+    for (int j = 0; j < eh; j++)
+        for (int i = 0; i < ew; i++) {
+            uint8_t *p = &s.rgba[((long)j * ew + i) * 4];
+            p[0] = (uint8_t)j; p[1] = (uint8_t)(j >> 8); p[2] = 77; p[3] = 255;
+        }
+    return s;
+}
+static int decoded_center_row(pano_t *p, int w, int h, uint32_t *buf) {
+    fb_t fb = { buf, w, h };
+    pano_render(p, &fb, 0.25);
+    uint32_t c = buf[(h / 2) * w + (w / 2)];
+    return (int)(c >> 16 & 0xff) | (int)(c >> 8 & 0xff) << 8;
+}
+/* A level camera looks at the horizon: the centre ray has latitude 0, which is
+ * the equirect's middle row. Pitching DOWN by `pr` puts the centre ray at
+ * latitude -pr, i.e. equirect row (0.5 + pr/pi) * eh -- further down the image,
+ * which is what "more ground, less sky" means geometrically. */
+static int pitch_lowers_the_centre_row(void) {
+    const int EW = 256, EH = 180, W = 81, H = 45;
+    img_t s = make_src_rows(EW, EH);
+    uint32_t buf[81 * 45];
+
+    pano_t *level = pano_create(&s, W, H, 140.f, 0.f);
+    int row_level = decoded_center_row(level, W, H, buf);
+    OK(row_level >= EH / 2 - 2 && row_level <= EH / 2 + 2);          /* 90 +/- 2 */
+    pano_destroy(level);
+
+    pano_t *down = pano_create(&s, W, H, 140.f, 30.f);
+    int row_down = decoded_center_row(down, W, H, buf);
+    int expect = (int)((0.5 + 30.0 / 180.0) * EH);                    /* 120 */
+    OK(row_down >= expect - 2 && row_down <= expect + 2);
+    OK(row_down > row_level);                                         /* strictly lower */
+    pano_destroy(down);
+
+    free(s.rgba);
+    return 0;
+}
 int main(void) { RUN(uniform_in_uniform_out); RUN(yaw_wraps_full_turn);
-                 RUN(center_maps_to_yaw_column); RUN(uniform_square_output); return 0; }
+                 RUN(center_maps_to_yaw_column); RUN(uniform_square_output);
+                 RUN(pitch_lowers_the_centre_row); return 0; }

@@ -1,6 +1,6 @@
 /* Fuzz-lite harness for the two attacker-facing parsers:
- *   - efi_load_option_description(): decodes whatever happens to be sitting
- *     in efivarfs NVRAM (see src/boot/actions.c).
+ *   - efi_load_option_desc(): decodes a raw EFI_LOAD_OPTION as the firmware
+ *     GetVariable returns it (see src/core/efivar.c).
  *   - config_load(): decodes boot_entries.json, which on a real device is
  *     read from the EFI System Partition (see src/core/assets.c).
  *
@@ -13,7 +13,7 @@
  * Same seed => same byte streams => same run every time, so a sanitizer
  * finding here is always reproducible.
  */
-#include "boot/actions.h"
+#include "core/efivar.h"
 #include "core/assets.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -48,16 +48,16 @@ static void fill_random(unsigned char *b, size_t n) {
     }
 }
 
-static void fuzz_efi_load_option_description(void) {
+static void fuzz_efi_load_option_desc(void) {
     unsigned char buf[BUF_CAP];
     char out[OUT_CAP];
     for (int iter = 0; iter < EFI_ITERS; iter++) {
         size_t n = xorshift64() % (BUF_CAP + 1);        /* 0..600 */
         fill_random(buf, n);
         size_t cap = xorshift64() % (OUT_CAP + 1);      /* 0..256, <= sizeof(out) */
-        int r = efi_load_option_description(buf, n, out, cap);
+        int r = efi_load_option_desc(buf, n, out, cap);
         if (r != -1 && r != 0) {
-            fprintf(stderr, "fuzz: efi_load_option_description returned %d "
+            fprintf(stderr, "fuzz: efi_load_option_desc returned %d "
                             "(n=%zu cap=%zu) at iter %d\n", r, n, cap, iter);
             exit(1);
         }
@@ -80,8 +80,8 @@ static void fuzz_config_load(const char *path) {
 }
 
 int main(void) {
-    fuzz_efi_load_option_description();
-    fprintf(stderr, "fuzz: efi_load_option_description ok (%d iters)\n", EFI_ITERS);
+    fuzz_efi_load_option_desc();
+    fprintf(stderr, "fuzz: efi_load_option_desc ok (%d iters)\n", EFI_ITERS);
 
     char path[] = "/tmp/craftboot_fuzz_config_XXXXXX";
     int fd = mkstemp(path);

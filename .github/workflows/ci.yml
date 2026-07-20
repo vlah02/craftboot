@@ -13,6 +13,9 @@ concurrency:
 
 jobs:
   lint:
+    # NOTE: this name is a required status check in main's branch protection.
+    # Renaming it makes GitHub wait forever for a check that never reports,
+    # which blocks every merge -- update the protection rule first if you do.
     name: lint scripts + tools
     runs-on: ubuntu-latest
     steps:
@@ -30,12 +33,19 @@ jobs:
           for s in "${scripts[@]}"; do echo "bash -n $s"; bash -n "$s"; done
 
       # Byte-compile the Python asset tools (bake_font / build_panorama /
-      # make_demo / reencode_panoramas) so a syntax error in a contributor
-      # helper is caught in CI instead of at asset-regen time.
+      # fetch_panoramas) so a syntax error in a contributor helper is caught
+      # in CI instead of at asset-regen time.
       - name: Python tools byte-compile (py_compile)
         run: |
           python3 --version
           python3 -m py_compile tools/*.py
+
+      # boot_entries.json is shipped verbatim to the ESP and parsed by the
+      # firmware app, where a syntax error means a menu that won't load and no
+      # console to debug it. tests/test_config.c parses this same file, but a
+      # JSON-level check gives a clearer failure than a parser assertion.
+      - name: Boot config is valid JSON
+        run: python3 -m json.tool boot_entries.json > /dev/null
 
   build-test:
     name: build + test
@@ -48,30 +58,22 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libdrm-dev libsdl2-dev zstd
+          sudo apt-get install -y build-essential
 
       - name: AVX2 preflight
         run: |
-          # the shipped binary is -march=x86-64-v3 and has no runtime scalar
-          # fallback, so the runner itself must be able to execute AVX2.
+          # the core is built -march=x86-64-v3 with no runtime scalar fallback,
+          # so the runner itself must be able to execute AVX2.
           grep -q avx2 /proc/cpuinfo || { echo "::error::runner CPU lacks AVX2"; exit 1; }
 
-      - name: Build ship binary (must be warning-free)
+      # There is no host binary to ship (the artifact is the EFI app, built in
+      # the efi-build job); this compiles the platform-agnostic core plus the
+      # test harnesses and runs them, gating on zero warnings.
+      - name: Unit tests (must be warning-free)
         run: |
           make clean
-          make 2>&1 | tee build-ship.log
-          ! grep -qi 'warning:' build-ship.log
-
-      - name: Build dev binary (must be warning-free)
-        run: |
-          make dev 2>&1 | tee build-dev.log
-          ! grep -qi 'warning:' build-dev.log
-
-      - name: Confirm ship binary is statically linked
-        run: file build/craftboot | grep -q 'statically linked'
-
-      - name: Unit tests
-        run: make test
+          make test 2>&1 | tee build-test.log
+          ! grep -qi 'warning:' build-test.log
 
       - name: Panorama performance gate (< 3 ms/frame @ 1080p target; generous on shared runners)
         run: make bench
@@ -96,7 +98,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libdrm-dev libsdl2-dev zstd
+          sudo apt-get install -y build-essential
 
       - name: AVX2 preflight
         run: |
@@ -110,3 +112,132 @@ jobs:
 
       - name: Fuzz-lite parsers (efivar load-option + config) under ASan + UBSan
         run: make fuzz
+
+  efi-build:
+    name: efi app build (shim-loadable PE32+)
+    runs-on: ubuntu-latest
+    # OVMF/QEMU boot is NOT exercised here (flaky in CI) -- that's a local gate
+    # via tools/run-qemu-efi.sh. This job proves `make efi` is warning-free and
+    # produces an image Ubuntu's shim will actually load.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # tags, so `git describe` yields the real version
+
+      - name: Install mingw cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+
+      - name: Build EFI app (must be warning-free)
+        run: |
+          make efi 2>&1 | tee build-efi.log
+          ! grep -qi 'warning:' build-efi.log
+
+      - name: Confirm PE32+ EFI application
+        run: file build/craftboot.efi | grep -q 'PE32+'
+
+      # Regression guard: shim 15.8 REJECTS a second stage with no .sbat section
+      # ("Security Violation"), regardless of signature. src/efi/sbat.c defines
+      # it so the LINKER places it at a real RVA inside SizeOfImage -- an
+      # objcopy --add-section lands it outside the mapped image, where shim
+      # cannot see it. This check would have caught that failure directly.
+      - name: .sbat section present (shim 15.8 requirement)
+        run: |
+          x86_64-w64-mingw32-objdump -h build/craftboot.efi | tee sections.txt
+          grep -q '\.sbat' sections.txt || {
+            echo "::error::no .sbat section -- shim will refuse to load this image"; exit 1; }
+
+      # Regression guard: mingw appends a COFF symbol/string table past the last
+      # PE section. That trailing overlay is not covered by the PE headers and
+      # breaks shim's Authenticode hashing ("gaps between PE/COFF sections"),
+      # so the Makefile runs objcopy --strip-all. Verify it actually happened.
+      - name: No trailing COFF symbol overlay (Authenticode requirement)
+        run: |
+          out="$(x86_64-w64-mingw32-nm build/craftboot.efi 2>&1 || true)"
+          echo "$out"
+          echo "$out" | grep -q 'no symbols' || {
+            echo "::error::symbol table still present -- shim Authenticode hashing will fail"; exit 1; }
+
+      # Handy for testing a PR build in QEMU without a local mingw toolchain.
+      - name: Upload craftboot.efi
+        uses: actions/upload-artifact@v4
+        with:
+          name: craftboot-efi
+          path: build/craftboot.efi
+          if-no-files-found: error
+
+  efi-boot:
+    name: efi app boots (QEMU/OVMF smoke test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Everything above only proves the image is well-formed; nothing proved it
+    # actually RUNS. This boots it under OVMF and requires it to reach the menu.
+    # Runners have no /dev/kvm, so this runs under TCG (~2 min to first frame)
+    # with -cpu max -- the default qemu64 model lacks AVX2 and craftboot.efi is
+    # built -mavx2 with no scalar fallback, so it would fault instantly.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install toolchain + QEMU/OVMF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 \
+                                  qemu-system-x86 ovmf socat python3-pil
+
+      - name: Build EFI app
+        run: make efi
+
+      - name: Boot under OVMF and wait for the menu to render
+        run: |
+          ./tools/run-qemu-efi.sh boot --no-kvm
+          LOG=build/qemu-efi-serial.log
+          for i in $(seq 1 180); do
+            grep -q "panorama world" "$LOG" && break
+            sleep 2
+          done
+          if ! grep -q "panorama world" "$LOG"; then
+            echo "::error::craftboot never reached the menu"; echo "--- serial ---"; cat "$LOG"
+            ./tools/run-qemu-efi.sh stop || true
+            exit 1
+          fi
+          grep "panorama world" "$LOG"
+
+      - name: Cancel auto-boot and capture the menu
+        run: |
+          # any key cancels the 15s countdown; without this the menu has already
+          # auto-booted into the handoff screen by the time we capture.
+          ./tools/run-qemu-efi.sh sendkey down
+          sleep 3
+          ./tools/run-qemu-efi.sh screendump build/menu.ppm
+
+      # A frame that renders as one flat colour means the app started but drew
+      # nothing (e.g. assets missing from the ESP) -- which the serial marker
+      # alone would not catch.
+      - name: Frame must contain real rendered content
+        run: |
+          python3 - <<'PY'
+          from PIL import Image
+          im = Image.open("build/menu.ppm").convert("RGB")
+          cols = im.getcolors(maxcolors=1000000) or []
+          frac = max(c for c, _ in cols) / (im.size[0] * im.size[1])
+          print(f"{im.size[0]}x{im.size[1]}, {len(cols)} distinct colours, "
+                f"most common covers {frac*100:.1f}%")
+          if len(cols) < 500 or frac > 0.9:
+              raise SystemExit("::error::frame looks blank -- app rendered nothing")
+          print("frame contains rendered content")
+          PY
+
+      - name: Shut down QEMU
+        if: always()
+        run: ./tools/run-qemu-efi.sh stop || true
+
+      - name: Upload the captured frame
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-menu-frame
+          path: build/menu.ppm
+          if-no-files-found: warn

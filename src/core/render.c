@@ -2,8 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef PANO_MP_SERVICES
+#include "platform/plat.h"      /* EFI: spread the render across cores via plat_run_on_all */
+#else
 #include <unistd.h>
 #include <pthread.h>
+#endif
 #ifndef PANO_NO_AVX2
 #include <immintrin.h>
 #endif
@@ -14,6 +18,47 @@ uint32_t mix_xrgb(uint32_t a, uint32_t b, unsigned w) {
     return rb | g;
 }
 void fb_fill(fb_t *f, uint32_t c) { for (long i = 0; i < (long)f->w * f->h; i++) f->px[i] = c; }
+
+/* Separable box blur with a running window sum (O(1) per pixel, independent of
+ * radius). Horizontal pass f->tmp, vertical pass tmp->f. Sample indices clamp to
+ * the border so the divisor stays a constant (2r+1). Scalar; only used for the
+ * one low-res panorama, so it need not be vectorized. */
+void fb_blur(fb_t *f, int radius, uint32_t *tmp) {
+    if (radius < 1 || !tmp) return;
+    int w = f->w, h = f->h, win = 2 * radius + 1;
+    for (int y = 0; y < h; y++) {                       /* horizontal: f -> tmp */
+        const uint32_t *row = &f->px[(long)y * w];
+        uint32_t *out = &tmp[(long)y * w];
+        int sr = 0, sg = 0, sb = 0;
+        for (int k = -radius; k <= radius; k++) {
+            uint32_t p = row[k < 0 ? 0 : (k >= w ? w - 1 : k)];
+            sr += (p >> 16) & 0xff; sg += (p >> 8) & 0xff; sb += p & 0xff;
+        }
+        for (int x = 0; x < w; x++) {
+            out[x] = (uint32_t)(sr / win) << 16 | (uint32_t)(sg / win) << 8 | (uint32_t)(sb / win);
+            int ia = x + radius + 1, ir = x - radius;
+            uint32_t pa = row[ia >= w ? w - 1 : ia], pr = row[ir < 0 ? 0 : ir];
+            sr += (int)((pa >> 16) & 0xff) - (int)((pr >> 16) & 0xff);
+            sg += (int)((pa >> 8) & 0xff) - (int)((pr >> 8) & 0xff);
+            sb += (int)(pa & 0xff) - (int)(pr & 0xff);
+        }
+    }
+    for (int x = 0; x < w; x++) {                        /* vertical: tmp -> f */
+        int sr = 0, sg = 0, sb = 0;
+        for (int k = -radius; k <= radius; k++) {
+            uint32_t p = tmp[(long)(k < 0 ? 0 : (k >= h ? h - 1 : k)) * w + x];
+            sr += (p >> 16) & 0xff; sg += (p >> 8) & 0xff; sb += p & 0xff;
+        }
+        for (int y = 0; y < h; y++) {
+            f->px[(long)y * w + x] = (uint32_t)(sr / win) << 16 | (uint32_t)(sg / win) << 8 | (uint32_t)(sb / win);
+            int ia = y + radius + 1, ir = y - radius;
+            uint32_t pa = tmp[(long)(ia >= h ? h - 1 : ia) * w + x], pr = tmp[(long)(ir < 0 ? 0 : ir) * w + x];
+            sr += (int)((pa >> 16) & 0xff) - (int)((pr >> 16) & 0xff);
+            sg += (int)((pa >> 8) & 0xff) - (int)((pr >> 8) & 0xff);
+            sb += (int)(pa & 0xff) - (int)(pr & 0xff);
+        }
+    }
+}
 void fill_rect(fb_t *f, int x, int y, int w, int h, uint32_t c) {
     for (int j = y; j < y + h; j++) {
         if (j < 0 || j >= f->h) continue;
@@ -165,11 +210,15 @@ struct pano {
     uint16_t *wv;           /* per output px, vertical weight 0..256 */
 };
 
-pano_t *pano_create(const img_t *eq, int out_w, int out_h, float fov_deg) {
+pano_t *pano_create(const img_t *eq, int out_w, int out_h, float fov_deg, float pitch_deg) {
     pano_t *p = calloc(1, sizeof *p);
     p->ew = eq->w; p->eh = eq->h; p->w = out_w; p->h = out_h;
+#ifdef PANO_MP_SERVICES
+    p->nthreads = 1;                    /* unused: plat_run_on_all uses all CPUs */
+#else
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
     p->nthreads = ncpu > 8 ? 8 : (ncpu < 1 ? 1 : (int)ncpu);
+#endif
     p->src = malloc((size_t)eq->w * eq->h * 4);
     for (long i = 0; i < (long)eq->w * eq->h; i++)
         p->src[i] = (uint32_t)eq->rgba[i*4] << 16 | (uint32_t)eq->rgba[i*4+1] << 8 | eq->rgba[i*4+2];
@@ -177,12 +226,27 @@ pano_t *pano_create(const img_t *eq, int out_w, int out_h, float fov_deg) {
     p->baselon = malloc(n * 4); p->row0 = malloc(n * 4); p->row1 = malloc(n * 4);
     p->wv = malloc(n * 2);
     double th = tan(fov_deg * M_PI / 360.0), tv = th * out_h / out_w;
+    double pr = pitch_deg * M_PI / 180.0, sp = sin(pr), cp = cos(pr);  /* +pr = look down */
+#ifdef PANO_CYLINDRICAL
+    double half_fov = fov_deg * M_PI / 360.0;         /* fov/2 in radians (cylindrical) */
+#endif
     for (int j = 0; j < out_h; j++) {
         double y = (out_h / 2.0 - (j + 0.5)) / (out_h / 2.0) * tv;
         for (int i = 0; i < out_w; i++) {
+#ifdef PANO_CYLINDRICAL
+            /* Cylindrical: longitude LINEAR in screen-x -> uniform horizontal
+             * sampling density, so the sides stay as sharp as the centre even
+             * at a wide FOV (no tan-magnification). Vertical kept perspective. */
+            double lon = ((i + 0.5) - out_w / 2.0) / (out_w / 2.0) * half_fov;
+            double lat = atan2(y, 1.0) - pr;
+#else
             double x = ((i + 0.5) - out_w / 2.0) / (out_w / 2.0) * th;
-            double lon = atan2(x, 1.0);
-            double lat = atan2(y, sqrt(x * x + 1.0));
+            /* ray (x, y, 1) in camera space; pitch = rotation about the right (X)
+             * axis, so a level camera (pr=0) reduces to the original horizon view. */
+            double yr = y * cp - sp, zr = y * sp + cp;
+            double lon = atan2(x, zr);
+            double lat = atan2(yr, sqrt(x * x + zr * zr));
+#endif
             double rowf = (0.5 - lat / M_PI) * p->eh;
             if (rowf < 0) rowf = 0;
             if (rowf > p->eh - 1) rowf = p->eh - 1;
@@ -262,9 +326,22 @@ static void *render_slice(void *arg) {
     }
     return NULL;
 }
+#ifdef PANO_MP_SERVICES
+typedef struct { pano_t *p; fb_t *out; int64_t yawfx; } mpctx_t;
+static void render_slice_mp(void *v, int idx, int nproc) {
+    mpctx_t *c = (mpctx_t *)v;
+    long h = c->p->h;
+    slice_t sl = { c->p, c->out, c->yawfx, (int)(h * idx / nproc), (int)(h * (idx + 1) / nproc) };
+    render_slice(&sl);
+}
+#endif
 void pano_render(pano_t *p, fb_t *out, double yaw_turns) {
     double t = fmod(yaw_turns, 1.0); if (t < 0) t += 1.0;
     int64_t yawfx = (int64_t)(t * p->ew * 65536.0);
+#ifdef PANO_MP_SERVICES
+    mpctx_t c = { p, out, yawfx };
+    plat_run_on_all(render_slice_mp, &c);   /* every core renders a row-slice */
+#else
     int nt = p->nthreads;
     pthread_t th[8]; slice_t sl[8];
     for (int i = 0; i < nt; i++) {
@@ -273,6 +350,7 @@ void pano_render(pano_t *p, fb_t *out, double yaw_turns) {
     }
     render_slice(&sl[nt - 1]);
     for (int i = 0; i < nt - 1; i++) pthread_join(th[i], NULL);
+#endif
 }
 void pano_destroy(pano_t *p) {
     free(p->src); free(p->baselon); free(p->row0); free(p->row1); free(p->wv); free(p);

@@ -2,7 +2,8 @@
 # Optional: make the firmware "Ubuntu" entry boot Ubuntu DIRECTLY via a signed
 # UKI (Ubuntu's real kernel + Ubuntu's real initramfs), with no GRUB menu in
 # the path at all. Reuses craftboot's existing MOK key (does NOT genkey) —
-# run uki-setup.sh genkey/install first so that key exists and is enrolled.
+# run efi-install.sh first, which generates the key and walks you through
+# MOK enrollment.
 #
 #   sudo ./dist/ubuntu/ubuntu-direct.sh install      redirect "Ubuntu" to boot direct
 #   sudo ./dist/ubuntu/ubuntu-direct.sh --uninstall  put the stock shim->GRUB entry back
@@ -31,8 +32,8 @@ build() {
     local KERNEL="/boot/vmlinuz-$KVER"
     local INITRD="/boot/initrd.img-$KVER"
 
-    [[ -f "$KEYDIR/MOK.key" ]] || { echo "No MOK key in $KEYDIR — run: sudo $HERE/uki-setup.sh genkey"; exit 1; }
-    [[ -f "$KEYDIR/MOK.crt" ]] || { echo "No MOK cert in $KEYDIR — run: sudo $HERE/uki-setup.sh genkey"; exit 1; }
+    [[ -f "$KEYDIR/MOK.key" ]] || { echo "No MOK key in $KEYDIR — run: sudo $HERE/efi-install.sh"; exit 1; }
+    [[ -f "$KEYDIR/MOK.crt" ]] || { echo "No MOK cert in $KEYDIR — run: sudo $HERE/efi-install.sh"; exit 1; }
     [[ -f "$KERNEL" ]]  || { echo "No kernel at $KERNEL"; exit 1; }
     [[ -f "$INITRD" ]]  || { echo "No initramfs at $INITRD"; exit 1; }
 
@@ -81,14 +82,14 @@ current_ubuntu_bootnum() {
 }
 
 install() {
-    [[ -f "$KEYDIR/MOK.key" ]] || { echo "No MOK key — run: sudo $HERE/uki-setup.sh genkey (and install) first."; exit 1; }
-    [[ -f "$KEYDIR/MOK.der" ]] || { echo "No MOK.der in $KEYDIR — run: sudo $HERE/uki-setup.sh genkey first."; exit 1; }
+    [[ -f "$KEYDIR/MOK.key" ]] || { echo "No MOK key — run: sudo $HERE/efi-install.sh first."; exit 1; }
+    [[ -f "$KEYDIR/MOK.der" ]] || { echo "No MOK.der in $KEYDIR — run: sudo $HERE/efi-install.sh first."; exit 1; }
     # capture first (mokutil exits non-zero even when enrolled; pipefail would
     # otherwise poison the pipeline and give a false "not enrolled")
     mok_status="$(mokutil --test-key "$KEYDIR/MOK.der" 2>&1 || true)"
     if ! printf '%s' "$mok_status" | grep -qi "already enrolled"; then
         echo "The Craftboot MOK is NOT enrolled yet (checked with mokutil --test-key)."
-        echo "Complete 'sudo $HERE/uki-setup.sh genkey' + the MOK Manager enrollment reboot first."
+        echo "Run 'sudo $HERE/efi-install.sh' + the MOK Manager enrollment reboot first."
         exit 1
     fi
     command -v efibootmgr >/dev/null 2>&1 || { echo "Missing efibootmgr — run: sudo apt install efibootmgr"; exit 1; }
